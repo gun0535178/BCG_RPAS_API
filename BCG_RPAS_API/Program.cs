@@ -2,6 +2,7 @@ using BCG_RPAS_API.Models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -10,7 +11,31 @@ var builder = WebApplication.CreateBuilder(args);
 //builder.Services.AddControllersWithViews(); // API ไม่ใช้
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "BCG RPAS API",
+        Version = "v1"
+    });
+
+    options.AddSecurityDefinition("bearer", new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        Description = "วางเฉพาะ Token ไม่ต้องใส่ Bearer นำหน้า"
+    });
+
+    options.AddSecurityRequirement(document =>
+        new OpenApiSecurityRequirement
+        {
+            [new OpenApiSecuritySchemeReference(
+                "bearer", document)] = []
+        });
+});
+
+
 // Connection DB from Manage
 var connectionString = builder.Configuration
     .GetConnectionString("DefaultConnection");

@@ -1,12 +1,34 @@
-﻿using Microsoft.AspNetCore.Mvc;
-
-namespace BCG_RPAS_API.Controllers.Master
+﻿namespace BCG_RPAS_API.Controllers.Master
 {
-    public class MasterCostCentersController : Controller
+    [ApiController]
+    [Authorize]
+    [Route("api/master/cost-centers")]
+    public class MasterCostCentersController : ControllerBase
     {
-        public IActionResult Index()
+        private readonly BCG_RPASContext _bcg;
+
+        public MasterCostCentersController(BCG_RPASContext bcg)
         {
-            return View();
+            _bcg = bcg;
+        }
+
+        [HttpGet]
+        public async Task<IActionResult> Get(
+            CancellationToken cancellationToken)
+        {
+            var queryMasterCostCenters = from _data in _bcg.MasterCostCenters.AsNoTracking()
+            where _data.Active == 1
+            orderby _data.CostCenterCode
+            select new
+            {
+                _data.Id,
+                _data.CostCenterCode,
+                _data.Name
+            };
+
+            var result = await queryMasterCostCenters.ToListAsync(cancellationToken);
+
+            return Ok(result);
         }
     }
 }
