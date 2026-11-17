@@ -1,12 +1,10 @@
-﻿using Microsoft.AspNetCore.Mvc;
-
-namespace BCG_RPAS_API.Controllers
+﻿namespace BCG_RPAS_API.Controllers
 {
-    public class UsersController : Controller
+    public class UsersController : ControllerBase
     {
         public IActionResult Index()
         {
-            return View();
+            return Ok();
         }
     }
 }

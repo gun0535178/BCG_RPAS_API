@@ -9,6 +9,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 //builder.Services.AddControllersWithViews(); // API ไม่ใช้
+
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<GetCurrentUser>();
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>

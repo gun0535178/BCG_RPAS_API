@@ -1,9 +1,5 @@
 ﻿using BCG_RPAS_API.DTOs.Auth;
-using BCG_RPAS_API.Models;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -110,7 +106,7 @@ namespace BCG_RPAS_API.Controllers
                     });
                 }
 
-                var now = DateTime.UtcNow;
+                var now = DateTime.Now;
                 var expiresDate = DateTime.Today.AddDays(1).ToUniversalTime();
 
                 var claims = new[]
