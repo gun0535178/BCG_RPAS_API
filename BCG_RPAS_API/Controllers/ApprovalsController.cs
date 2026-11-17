@@ -1,0 +1,12 @@
+﻿using Microsoft.AspNetCore.Mvc;
+
+namespace BCG_RPAS_API.Controllers
+{
+    public class ApprovalsController : Controller
+    {
+        public IActionResult Index()
+        {
+            return View();
+        }
+    }
+}
