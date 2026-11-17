@@ -2,11 +2,35 @@
 
 namespace BCG_RPAS_API.Controllers.Master
 {
-    public class MasterRolesController : Controller
+    [ApiController]
+    [Authorize]
+    [Tags("Master")]
+    [Route("api/master/role")]
+    public class MasterRolesController : ControllerBase
     {
-        public IActionResult Index()
+        private readonly BCG_RPASContext _bcg;
+
+        public MasterRolesController(BCG_RPASContext bcg)
         {
-            return View();
+            _bcg = bcg;
+        }
+
+        [HttpGet]
+        public async Task<IActionResult> Get(
+            CancellationToken cancellationToken)
+        {
+            var query = from _data in _bcg.MasterRoles.AsNoTracking()
+                        where _data.Active == 1
+                        select new
+                        {
+                            _data.Id,
+                            _data.RoleCode,
+                            _data.Name
+                        };
+
+            var result = await query.ToListAsync(cancellationToken);
+
+            return Ok(result);
         }
     }
 }

@@ -2,7 +2,8 @@
 {
     [ApiController]
     [Authorize]
-    [Route("api/master/cost-centers")]
+    [Tags("Master")]
+    [Route("api/master/cost-center")]
     public class MasterCostCentersController : ControllerBase
     {
         private readonly BCG_RPASContext _bcg;
