@@ -111,7 +111,7 @@ namespace BCG_RPAS_API.Controllers
                         VatRate = request.VatRate,
                         Notes = request.Notes,
 
-                        StatusId = DataFactory.statusDraft,
+                        StatusId = DataFactory.StatusDraft,
                         SyncStatus = "NotQueued",
                         ConcurrencyVersion = 1,
                         Active = 1,
@@ -164,7 +164,7 @@ namespace BCG_RPAS_API.Controllers
                         where _data.Id == id
                             && _data.RequesterId == requesterId.Value
                             && _data.Active == 1
-                            && _data.StatusId == DataFactory.statusDraft
+                            && _data.StatusId == DataFactory.StatusDraft
                             && _data.ConcurrencyVersion == expectedVersion
                         select _data;
 
