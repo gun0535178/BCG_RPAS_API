@@ -141,7 +141,7 @@ namespace BCG_RPAS_API.Controllers
                     }
                 }
 
-                var now = DateTime.UtcNow;
+                var now = DateTime.Now;
 
                 // 1. สร้างคำขอใหม่ (DRAFT)
                 if (id == 0)
@@ -187,12 +187,12 @@ namespace BCG_RPAS_API.Controllers
                         }
                     }
 
-                    // บันทึก Log การสร้างร่าง
+                    // บันทึก Log การสร้างร่าง (ต้องตรงกับ CK_Logs_Action = 'Create')
                     _bcg.Logs.Add(new Log
                     {
                         RequestId = rentalRequestObject.Id,
                         ActorId = requesterId.Value,
-                        Action = "CREATE_DRAFT",
+                        Action = DataFactory.LogAction.LogActionCreate,
                         FromStatusId = null,
                         ToStatusId = DataFactory.StatusDraft,
                         RequestRevisionId = null,
@@ -293,6 +293,23 @@ namespace BCG_RPAS_API.Controllers
                         await SyncDraftAttachmentsAsync(id, requesterId.Value, cleanedFileNames, now, cancellationToken);
                     }
 
+                    // บันทึก Log การแก้ไขร่าง (ต้องตรงกับ CK_Logs_Action = 'Edit')
+                    _bcg.Logs.Add(new Log
+                    {
+                        RequestId = id,
+                        ActorId = requesterId.Value,
+                        Action = DataFactory.LogAction.LogActionEdit,
+                        FromStatusId = existingRequest.StatusId,
+                        ToStatusId = existingRequest.StatusId,
+                        RequestRevisionId = null,
+                        ActionDate = now,
+                        Details = "แก้ไขข้อมูลคำขอค่าเช่า",
+                        TraceId = HttpContext.TraceIdentifier,
+                        Active = 1,
+                        CreateBy = requesterId.Value,
+                        CreateDate = now
+                    });
+
                     await _bcg.SaveChangesAsync(cancellationToken);
                     await transaction.CommitAsync(cancellationToken);
 
@@ -307,9 +324,18 @@ namespace BCG_RPAS_API.Controllers
             catch (DbUpdateException dbEx)
             {
                 _logger.LogWarning(dbEx, "Database constraint conflict while saving draft");
-                return Conflict(new
+                var innerMsg = dbEx.InnerException?.Message ?? dbEx.Message;
+                if (innerMsg.Contains("UX_RentalRequests_ContractPeriod", StringComparison.OrdinalIgnoreCase))
                 {
-                    detail = "ไม่สามารถบันทึกได้เนื่องจากสัญญาและช่วงวันที่ซ้ำกับรายการอื่นในระบบ"
+                    return Conflict(new
+                    {
+                        detail = "ไม่สามารถบันทึกได้เนื่องจากสัญญาและช่วงวันที่ซ้ำกับรายการอื่นในระบบ"
+                    });
+                }
+
+                return BadRequest(new
+                {
+                    detail = "ข้อมูลไม่ผ่านเงื่อนไขของฐานข้อมูล: " + innerMsg
                 });
             }
             catch (Exception ex)
@@ -587,7 +613,7 @@ namespace BCG_RPAS_API.Controllers
                 }
 
                 // 7. บันทึก Revision, Snapshot, ApprovalSteps, Attachments และเปลี่ยนสถานะแบบ Atomic
-                var now = DateTime.UtcNow;
+                var now = DateTime.Now;
                 var nextRevisionNumber = (rentalRequest.CurrentRevision ?? 0) + 1;
                 var isResubmit = rentalRequest.StatusId == DataFactory.StatusRevisionRequired;
 
@@ -681,7 +707,7 @@ namespace BCG_RPAS_API.Controllers
                     await SyncDraftAttachmentsAsync(id, requesterId.Value, activeDraftFiles, now, cancellationToken);
                 }
 
-                // ยกเลิก Step เก่าของ Revision ก่อนหน้าที่อาจค้างอยู่ให้เป็น Superseded
+                // ยกเลิก Step เก่าของ Revision ก่อนหน้าที่อาจค้างอยู่ให้เป็น Superseded (ต้องกำหนด ActionDate ตาม CK_ApprovalSteps_ActionTime)
                 await _bcg.ApprovalSteps
                     .Where(s =>
                         s.RequestId == id &&
@@ -690,6 +716,7 @@ namespace BCG_RPAS_API.Controllers
                          s.Status == DataFactory.StepStatus.StepStatusWaiting))
                     .ExecuteUpdateAsync(setters => setters
                         .SetProperty(s => s.Status, DataFactory.StepStatus.StepStatusSuperseded)
+                        .SetProperty(s => s.ActionDate, s => s.ActionDate ?? now)
                         .SetProperty(s => s.ModifyBy, (int?)requesterId.Value)
                         .SetProperty(s => s.ModifyDate, (DateTime?)now)
                         .SetProperty(s => s.ConcurrencyVersion, s => s.ConcurrencyVersion + 1),
@@ -792,12 +819,14 @@ namespace BCG_RPAS_API.Controllers
                     });
                 }
 
-                // บันทึก Audit Log
+                // บันทึก Audit Log (ต้องตรงกับ CK_Logs_Action = 'Submit' หรือ 'Resubmit')
                 _bcg.Logs.Add(new Log
                 {
                     RequestId = id,
                     ActorId = requesterId.Value,
-                    Action = isResubmit ? "RESUBMIT" : "SUBMIT",
+                    Action = isResubmit
+                        ? DataFactory.LogAction.LogActionResubmit
+                        : DataFactory.LogAction.LogActionSubmit,
                     FromStatusId = rentalRequest.StatusId,
                     ToStatusId = DataFactory.StatusPendingManager,
                     RequestRevisionId = newRevision.Id,
@@ -824,9 +853,18 @@ namespace BCG_RPAS_API.Controllers
             catch (DbUpdateException dbEx)
             {
                 _logger.LogWarning(dbEx, "Database constraint conflict while submitting request {RequestId}", id);
-                return Conflict(new
+                var innerMsg = dbEx.InnerException?.Message ?? dbEx.Message;
+                if (innerMsg.Contains("UX_RentalRequests_ContractPeriod", StringComparison.OrdinalIgnoreCase))
                 {
-                    detail = "ไม่สามารถส่งอนุมัติได้เนื่องจากสัญญาและงวดวันที่ซ้ำกับรายการอื่นในระบบ"
+                    return Conflict(new
+                    {
+                        detail = "ไม่สามารถส่งอนุมัติได้เนื่องจากสัญญาและงวดวันที่ซ้ำกับรายการอื่นในระบบ"
+                    });
+                }
+
+                return BadRequest(new
+                {
+                    detail = "ข้อมูลไม่ผ่านเงื่อนไขของฐานข้อมูล: " + innerMsg
                 });
             }
             catch (Exception ex)
@@ -912,7 +950,7 @@ namespace BCG_RPAS_API.Controllers
                         .SingleOrDefaultAsync(cancellationToken);
                 }
 
-                var now = DateTime.UtcNow;
+                var now = DateTime.Now;
                 await using var transaction = await _bcg.Database.BeginTransactionAsync(cancellationToken);
 
                 var affected = await _bcg.RentalRequests
@@ -962,7 +1000,7 @@ namespace BCG_RPAS_API.Controllers
                 {
                     RequestId = id,
                     ActorId = requesterId.Value,
-                    Action = "CANCEL",
+                    Action = DataFactory.LogAction.LogActionCancel,
                     FromStatusId = rentalRequest.StatusId,
                     ToStatusId = DataFactory.StatusCancelled,
                     RequestRevisionId = currentRevisionId,

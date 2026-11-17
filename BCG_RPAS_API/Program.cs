@@ -15,6 +15,18 @@ builder.Services.AddScoped<GetCurrentUser>();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
+
+// CORS for Web Frontend
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowWebOrigin", policy =>
+    {
+        policy.WithOrigins("http://localhost:5108", "https://localhost:7298")
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
+    });
+});
 builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new OpenApiInfo
@@ -134,6 +146,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseRouting();
+
+app.UseCors("AllowWebOrigin");
 
 app.UseAuthentication();
 app.UseAuthorization();

@@ -70,7 +70,27 @@
         }
 
         // ==========================================
-        // 5. Business Thresholds & Rules
+        // 5. Audit Log Actions (CK_Logs_Action)
+        // ==========================================
+        public static class LogAction
+        {
+            public const string LogActionCreate = "Create";
+            public const string LogActionEdit = "Edit";
+            public const string LogActionSubmit = "Submit";
+            public const string LogActionResubmit = "Resubmit";
+            public const string LogActionApprove = "Approve";
+            public const string LogActionReject = "Reject";
+            public const string LogActionReturn = "Return";
+            public const string LogActionCancel = "Cancel";
+            public const string LogActionErpQueued = "ErpQueued";
+            public const string LogActionErpAttempt = "ErpAttempt";
+            public const string LogActionErpSucceeded = "ErpSucceeded";
+            public const string LogActionErpFailed = "ErpFailed";
+            public const string LogActionErpRetry = "ErpRetry";
+        }
+
+        // ==========================================
+        // 6. Business Thresholds & Rules
         // ==========================================
         /// <summary>
         /// เกณฑ์วงเงินอนุมัติขั้นต้นของหัวหน้า (ก่อน VAT)
