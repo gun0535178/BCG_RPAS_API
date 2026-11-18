@@ -247,7 +247,16 @@ namespace BCG_RPAS_API.Controllers
                         {
                             _data.Id,
                             _data.StatusId,
-                            _data.ConcurrencyVersion
+                            _data.ConcurrencyVersion,
+                            _data.ContractId,
+                            ContractNumber = _data.MasterContract != null ? _data.MasterContract.ContractNumber : null,
+                            _data.CostCenterId,
+                            CostCenterCode = _data.CostCenter != null ? _data.CostCenter.CostCenterCode : null,
+                            _data.PeriodStartDate,
+                            _data.PeriodEndDate,
+                            _data.Amount,
+                            _data.VatRate,
+                            _data.Notes
                         };
 
                     var existingRequest = await existingQuery.SingleOrDefaultAsync(cancellationToken);
@@ -265,9 +274,102 @@ namespace BCG_RPAS_API.Controllers
                     {
                         return Conflict(new
                         {
-                            detail = "แก้ไขได้เฉพาะคำขอในสถานะ DRAFT หรือ REVISION_REQUIRED เท่านั้น"
+                            detail = "แก้ไขได้เฉพาะคำขอในสถานะฉบับร่าง หรือ ส่งคืนให้แก้ไข เท่านั้น"
                         });
                     }
+
+                    // ดึงรายการไฟล์แนบร่างเดิมก่อนแก้ไข เพื่อเปรียบเทียบว่าแก้ไขอะไรไปบ้าง
+                    var oldFilesQuery =
+                        from _data in _bcg.Attachments.AsNoTracking()
+                        where _data.Active == 1
+                            && _data.RequestId == id
+                            && _data.RequestRevisionId == null
+                        orderby _data.Id
+                        select _data.FileName;
+
+                    var oldFileNames = await oldFilesQuery.ToListAsync(cancellationToken);
+
+                    // สร้างข้อความสรุปการแก้ไข (จากอะไร -> เป็นอะไร)
+                    var changes = new List<string>();
+
+                    if (existingRequest.ContractId != request.ContractId)
+                    {
+                        string newContractLabel = "-";
+                        if (request.ContractId.HasValue)
+                        {
+                            var newContractQuery =
+                                from _data in _bcg.MasterContracts.AsNoTracking()
+                                where _data.Id == request.ContractId.Value
+                                select _data.ContractNumber;
+                            newContractLabel = await newContractQuery.SingleOrDefaultAsync(cancellationToken) ?? $"#{request.ContractId.Value}";
+                        }
+                        var oldContractLabel = existingRequest.ContractNumber ?? (existingRequest.ContractId.HasValue ? $"#{existingRequest.ContractId.Value}" : "-");
+                        changes.Add($"เลขที่สัญญา (จาก '{oldContractLabel}' เป็น '{newContractLabel}')");
+                    }
+
+                    if (existingRequest.CostCenterId != request.CostCenterId)
+                    {
+                        string newCcLabel = "-";
+                        if (request.CostCenterId.HasValue)
+                        {
+                            var newCcQuery =
+                                from _data in _bcg.MasterCostCenters.AsNoTracking()
+                                where _data.Id == request.CostCenterId.Value
+                                select _data.CostCenterCode;
+                            newCcLabel = await newCcQuery.SingleOrDefaultAsync(cancellationToken) ?? $"#{request.CostCenterId.Value}";
+                        }
+                        var oldCcLabel = existingRequest.CostCenterCode ?? (existingRequest.CostCenterId.HasValue ? $"#{existingRequest.CostCenterId.Value}" : "-");
+                        changes.Add($"แผนก/ฝ่าย (จาก '{oldCcLabel}' เป็น '{newCcLabel}')");
+                    }
+
+                    if (existingRequest.PeriodStartDate?.Date != normalizedStartDate)
+                    {
+                        var oldStart = existingRequest.PeriodStartDate?.ToString("dd/MM/yyyy") ?? "-";
+                        var newStart = normalizedStartDate?.ToString("dd/MM/yyyy") ?? "-";
+                        changes.Add($"วันเริ่มต้นงวด (จาก '{oldStart}' เป็น '{newStart}')");
+                    }
+
+                    if (existingRequest.PeriodEndDate?.Date != normalizedEndDate)
+                    {
+                        var oldEnd = existingRequest.PeriodEndDate?.ToString("dd/MM/yyyy") ?? "-";
+                        var newEnd = normalizedEndDate?.ToString("dd/MM/yyyy") ?? "-";
+                        changes.Add($"วันสิ้นสุดงวด (จาก '{oldEnd}' เป็น '{newEnd}')");
+                    }
+
+                    if (existingRequest.Amount != request.Amount)
+                    {
+                        var oldAmt = existingRequest.Amount?.ToString("N2") ?? "-";
+                        var newAmt = request.Amount?.ToString("N2") ?? "-";
+                        changes.Add($"ยอดเงินก่อน VAT (จาก '{oldAmt}' เป็น '{newAmt}' บาท)");
+                    }
+
+                    if (existingRequest.VatRate != request.VatRate)
+                    {
+                        var oldVat = existingRequest.VatRate?.ToString("N2") ?? "-";
+                        var newVat = request.VatRate?.ToString("N2") ?? "-";
+                        changes.Add($"อัตรา VAT (จาก '{oldVat}%' เป็น '{newVat}%')");
+                    }
+
+                    var oldNotesNorm = string.IsNullOrWhiteSpace(existingRequest.Notes) ? "-" : existingRequest.Notes.Trim();
+                    var newNotesNorm = string.IsNullOrWhiteSpace(request.Notes) ? "-" : request.Notes.Trim();
+                    if (!string.Equals(oldNotesNorm, newNotesNorm, StringComparison.Ordinal))
+                    {
+                        changes.Add($"หมายเหตุ (จาก '{oldNotesNorm}' เป็น '{newNotesNorm}')");
+                    }
+
+                    if (cleanedFileNames != null)
+                    {
+                        var oldFilesJoined = oldFileNames.Count > 0 ? string.Join(", ", oldFileNames) : "ไม่มีไฟล์";
+                        var newFilesJoined = cleanedFileNames.Count > 0 ? string.Join(", ", cleanedFileNames) : "ไม่มีไฟล์";
+                        if (!string.Equals(oldFilesJoined, newFilesJoined, StringComparison.OrdinalIgnoreCase))
+                        {
+                            changes.Add($"ไฟล์เอกสารแนบ (จาก '{oldFilesJoined}' เป็น '{newFilesJoined}')");
+                        }
+                    }
+
+                    var editLogDetails = changes.Count > 0
+                        ? "แก้ไขข้อมูลคำขอ: " + string.Join(", ", changes)
+                        : "กดบันทึกข้อมูลคำขอ (ไม่มีการเปลี่ยนแปลงค่า)";
 
                     await using var transaction = await _bcg.Database.BeginTransactionAsync(cancellationToken);
 
@@ -311,22 +413,25 @@ namespace BCG_RPAS_API.Controllers
                         await SyncDraftAttachmentsAsync(id, requesterId.Value, cleanedFileNames, now, cancellationToken);
                     }
 
-                    // บันทึก Log การแก้ไขร่าง (ต้องตรงกับ CK_Logs_Action = 'Edit')
-                    _bcg.Logs.Add(new Log
+                    // บันทึก Log การแก้ไขร่างเฉพาะเมื่อมีการเปลี่ยนแปลงข้อมูลจริง (หรือบันทึกพร้อมรายละเอียดจากอะไรเป็นอะไร)
+                    if (changes.Count > 0)
                     {
-                        RequestId = id,
-                        ActorId = requesterId.Value,
-                        Action = DataFactory.LogAction.LogActionEdit,
-                        FromStatusId = existingRequest.StatusId,
-                        ToStatusId = existingRequest.StatusId,
-                        RequestRevisionId = null,
-                        ActionDate = now,
-                        Details = "แก้ไขข้อมูลคำขอค่าเช่า",
-                        TraceId = HttpContext.TraceIdentifier,
-                        Active = 1,
-                        CreateBy = requesterId.Value,
-                        CreateDate = now
-                    });
+                        _bcg.Logs.Add(new Log
+                        {
+                            RequestId = id,
+                            ActorId = requesterId.Value,
+                            Action = DataFactory.LogAction.LogActionEdit,
+                            FromStatusId = existingRequest.StatusId,
+                            ToStatusId = existingRequest.StatusId,
+                            RequestRevisionId = null,
+                            ActionDate = now,
+                            Details = editLogDetails,
+                            TraceId = HttpContext.TraceIdentifier,
+                            Active = 1,
+                            CreateBy = requesterId.Value,
+                            CreateDate = now
+                        });
+                    }
 
                     await _bcg.SaveChangesAsync(cancellationToken);
                     await transaction.CommitAsync(cancellationToken);
@@ -645,6 +750,98 @@ namespace BCG_RPAS_API.Controllers
                 var nextRevisionNumber = (rentalRequest.CurrentRevision ?? 0) + 1;
                 var isResubmit = rentalRequest.StatusId == DataFactory.StatusRevisionRequired;
 
+                // หากเป็นการส่งขออนุมัติใหม่หลังจากถูกส่งคืนให้แก้ไข (REVISION_REQUIRED)
+                // ต้องตรวจสอบว่าผู้ขอได้ทำการแก้ไขข้อมูลหรือเอกสารแนบแตกต่างจาก Revision ล่าสุดที่ถูกส่งคืนหรือไม่
+                string? resubmitDiffSummary = null;
+                if (isResubmit && rentalRequest.CurrentRevision.HasValue)
+                {
+                    var lastRevQuery =
+                        from _data in _bcg.RequestRevisions.AsNoTracking()
+                        where _data.Active == 1
+                            && _data.RequestId == id
+                            && _data.RevisionNumber == rentalRequest.CurrentRevision.Value
+                        select _data;
+
+                    var lastRev = await lastRevQuery.SingleOrDefaultAsync(cancellationToken);
+                    if (lastRev != null)
+                    {
+                        var lastRevFilesQuery =
+                            from _data in _bcg.Attachments.AsNoTracking()
+                            where _data.Active == 1
+                                && _data.RequestId == id
+                                && _data.RequestRevisionId == lastRev.Id
+                            orderby _data.Id
+                            select _data.FileName;
+
+                        var lastRevFiles = await lastRevFilesQuery.ToListAsync(cancellationToken);
+
+                        string? lastNotes = null;
+                        try
+                        {
+                            using var snapDoc = JsonDocument.Parse(lastRev.SnapshotJson);
+                            if (snapDoc.RootElement.TryGetProperty("Notes", out var notesEl) && notesEl.ValueKind == JsonValueKind.String)
+                            {
+                                lastNotes = notesEl.GetString();
+                            }
+                        }
+                        catch
+                        {
+                            // Ignore JSON parse error
+                        }
+
+                        var revDiffs = new List<string>();
+
+                        if (lastRev.ContractId != contractInfo.Id)
+                        {
+                            revDiffs.Add($"เลขที่สัญญา (เป็น '{contractInfo.ContractNumber}')");
+                        }
+                        if (lastRev.CostCenterId != costCenterInfo.Id)
+                        {
+                            revDiffs.Add($"แผนก/ฝ่าย (เป็น '{costCenterInfo.CostCenterCode}')");
+                        }
+                        if (lastRev.PeriodStartDate.Date != periodStart)
+                        {
+                            revDiffs.Add($"วันเริ่มต้นงวด (จาก '{lastRev.PeriodStartDate:dd/MM/yyyy}' เป็น '{periodStart:dd/MM/yyyy}')");
+                        }
+                        if (lastRev.PeriodEndDate.Date != periodEnd)
+                        {
+                            revDiffs.Add($"วันสิ้นสุดงวด (จาก '{lastRev.PeriodEndDate:dd/MM/yyyy}' เป็น '{periodEnd:dd/MM/yyyy}')");
+                        }
+                        if (lastRev.Amount != amount)
+                        {
+                            revDiffs.Add($"ยอดเงินก่อน VAT (จาก '{lastRev.Amount:N2}' เป็น '{amount:N2}' บาท)");
+                        }
+                        if (lastRev.VatRate != vatRate)
+                        {
+                            revDiffs.Add($"อัตรา VAT (จาก '{lastRev.VatRate:N2}%' เป็น '{vatRate:N2}%')");
+                        }
+
+                        var oldRevNotesNorm = string.IsNullOrWhiteSpace(lastNotes) ? "-" : lastNotes.Trim();
+                        var currentNotesNorm = string.IsNullOrWhiteSpace(rentalRequest.Notes) ? "-" : rentalRequest.Notes.Trim();
+                        if (!string.Equals(oldRevNotesNorm, currentNotesNorm, StringComparison.Ordinal))
+                        {
+                            revDiffs.Add($"หมายเหตุ (จาก '{oldRevNotesNorm}' เป็น '{currentNotesNorm}')");
+                        }
+
+                        var oldRevFilesJoined = lastRevFiles.Count > 0 ? string.Join(", ", lastRevFiles) : "ไม่มีไฟล์";
+                        var currentFilesJoined = activeDraftFiles.Count > 0 ? string.Join(", ", activeDraftFiles) : "ไม่มีไฟล์";
+                        if (!string.Equals(oldRevFilesJoined, currentFilesJoined, StringComparison.OrdinalIgnoreCase))
+                        {
+                            revDiffs.Add($"ไฟล์เอกสารแนบ (จาก '{oldRevFilesJoined}' เป็น '{currentFilesJoined}')");
+                        }
+
+                        if (revDiffs.Count == 0)
+                        {
+                            return BadRequest(new
+                            {
+                                detail = "คำขอนี้ถูกส่งคืนให้แก้ไข กรุณาแก้ไขข้อมูลหรืออัปเดตเอกสารแนบอย่างน้อย 1 รายการก่อนส่งขออนุมัติใหม่"
+                            });
+                        }
+
+                        resubmitDiffSummary = string.Join(", ", revDiffs);
+                    }
+                }
+
                 var computedVatAmount = Math.Round(amount * vatRate / 100m, 2, MidpointRounding.AwayFromZero);
                 var computedTotalAmount = amount + computedVatAmount;
 
@@ -866,8 +1063,8 @@ namespace BCG_RPAS_API.Controllers
                     RequestRevisionId = newRevision.Id,
                     ActionDate = now,
                     Details = isResubmit
-                        ? $"ส่งคำขออนุมัติใหม่ (Revision #{nextRevisionNumber})"
-                        : $"ส่งคำขออนุมัติครั้งแรก (Revision #{nextRevisionNumber})",
+                        ? $"ส่งคำขออนุมัติใหม่ (รอบที่ #{nextRevisionNumber}) | รายการที่แก้ไข: {resubmitDiffSummary}"
+                        : $"ส่งคำขออนุมัติครั้งแรก (รอบที่ #{nextRevisionNumber})",
                     TraceId = HttpContext.TraceIdentifier,
                     Active = 1,
                     CreateBy = requesterId.Value,

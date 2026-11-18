@@ -638,7 +638,7 @@ namespace BCG_RPAS_API.Controllers
                     .ExecuteUpdateAsync(setters => setters
                         .SetProperty(s => s.Status, remainingWaitingStatus)
                         .SetProperty(s => s.ActionDate, (DateTime?)now)
-                        .SetProperty(s => s.Reason, reason)
+                        .SetProperty(s => s.Reason, (string?)null)
                         .SetProperty(s => s.ModifyBy, (int?)approverId.Value)
                         .SetProperty(s => s.ModifyDate, (DateTime?)now)
                         .SetProperty(s => s.ConcurrencyVersion, s => s.ConcurrencyVersion + 1),
