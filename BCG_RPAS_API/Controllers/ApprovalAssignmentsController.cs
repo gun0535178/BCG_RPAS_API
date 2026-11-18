@@ -61,8 +61,9 @@ namespace BCG_RPAS_API.Controllers
 
             var assignments = await assignmentsQuery.ToListAsync(cancellationToken);
 
-            // แยกกลุ่มผู้ขอ (ทุกคนที่สามารถสร้างใบคำขอได้ โดยเฉพาะ REQUESTER หรือทุก Role ที่ต้องการผูกสายอนุมัติ)
+            // แยกกลุ่มผู้ขอ (เฉพาะบทบาท REQUESTER เท่านั้นตามหลักการแบ่งแยกหน้าที่)
             var requesters = users
+                .Where(u => u.RoleId == DataFactory.RoleRequester)
                 .Select(u =>
                 {
                     var mgr = assignments.FirstOrDefault(a => a.RequesterId == u.Id && a.ApprovalRoleId == DataFactory.RoleManager);
@@ -132,16 +133,17 @@ namespace BCG_RPAS_API.Controllers
                 return BadRequest(new { detail = "ผู้อนุมัติขั้นที่ 1 (Manager) และขั้นที่ 2 (Executive) ต้องไม่เป็นบุคคลเดียวกัน" });
             }
 
-            // ตรวจสอบว่าผู้ขอมีอยู่จริง
+            // ตรวจสอบว่าผู้ขอมีอยู่จริงและเป็นบทบาท REQUESTER เท่านั้น
             var requesterQuery =
                 from _data in _bcg.Users.AsNoTracking()
                 where _data.Active == 1
                     && _data.Id == request.RequesterId
+                    && _data.RoleId == DataFactory.RoleRequester
                 select _data.Id;
 
             if (!await requesterQuery.AnyAsync(cancellationToken))
             {
-                return NotFound(new { detail = "ไม่พบข้อมูลผู้ขออนุมัติที่ระบุ" });
+                return BadRequest(new { detail = "ผู้ขออนุมัติที่เลือกต้องมีบทบาทเป็น ผู้ขออนุมัติ (REQUESTER) ที่เปิดใช้งานอยู่เท่านั้น" });
             }
 
             // ตรวจสอบว่า Manager มีบทบาทเป็น MANAGER จริงและ Active

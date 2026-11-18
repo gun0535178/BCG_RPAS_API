@@ -35,6 +35,14 @@ namespace BCG_RPAS_API.Controllers
                     return Unauthorized();
                 }
 
+                if (!User.IsInRole(DataFactory.RoleCode.RoleCodeRequester))
+                {
+                    return StatusCode(StatusCodes.Status403Forbidden, new
+                    {
+                        detail = "เฉพาะผู้ขออนุมัติ (REQUESTER) เท่านั้นที่สามารถสร้างหรือแก้ไขใบคำขอค่าเช่าได้"
+                    });
+                }
+
                 int id = request.Id;
 
                 // Normalize วันที่งวดให้เป็นเวลาเที่ยงคืน (00:00:00) เสมอ
@@ -485,6 +493,14 @@ namespace BCG_RPAS_API.Controllers
                 if (requesterId == null)
                 {
                     return Unauthorized();
+                }
+
+                if (!User.IsInRole(DataFactory.RoleCode.RoleCodeRequester))
+                {
+                    return StatusCode(StatusCodes.Status403Forbidden, new
+                    {
+                        detail = "เฉพาะผู้ขออนุมัติ (REQUESTER) เท่านั้นที่สามารถส่งใบคำขออนุมัติได้"
+                    });
                 }
 
                 if (id <= 0)
@@ -1122,6 +1138,14 @@ namespace BCG_RPAS_API.Controllers
                 if (requesterId == null)
                 {
                     return Unauthorized();
+                }
+
+                if (!User.IsInRole(DataFactory.RoleCode.RoleCodeRequester))
+                {
+                    return StatusCode(StatusCodes.Status403Forbidden, new
+                    {
+                        detail = "เฉพาะผู้ขออนุมัติ (REQUESTER) เท่านั้นที่สามารถยกเลิกใบคำขอได้"
+                    });
                 }
 
                 if (id <= 0)

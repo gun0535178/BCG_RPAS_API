@@ -4,7 +4,7 @@ using BCG_RPAS_API.DTOs.Approvals;
 namespace BCG_RPAS_API.Controllers
 {
     [ApiController]
-    [Authorize]
+    [Authorize(Roles = "MANAGER,EXECUTIVE,ADMINISTRATOR")]
     [Route("api/approvals")]
     public class ApprovalsController : ControllerBase
     {
