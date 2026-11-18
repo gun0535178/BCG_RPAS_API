@@ -19,11 +19,10 @@ namespace BCG_RPAS_API.Controllers.Master
 
         [HttpGet]
         public async Task<IActionResult> Get(
-            [FromQuery] bool includeInactive = false,
             CancellationToken cancellationToken = default)
         {
             var query = from _data in _bcg.MasterRentalTypes.AsNoTracking()
-                        where includeInactive || _data.Active == 1
+                        where _data.Active == 1
                         orderby _data.Id
                         select new
                         {
@@ -48,6 +47,39 @@ namespace BCG_RPAS_API.Controllers.Master
             var userId = await _getCurrentUser.GetCurrentUserId(cancellationToken);
             if (userId == null) return Unauthorized();
 
+            var now = DateTime.Now;
+
+            // Soft Delete (Active = 0)
+            if (request.Id > 0 && request.Active == 0)
+            {
+                var toDelete = await _bcg.MasterRentalTypes
+                    .SingleOrDefaultAsync(rt => rt.Id == request.Id && rt.Active == 1, cancellationToken);
+
+                if (toDelete == null)
+                {
+                    return NotFound(new { detail = "ไม่พบข้อมูลประเภทการเช่าที่ต้องการลบ" });
+                }
+
+                if (request.ExpectedConcurrencyVersion.HasValue &&
+                    toDelete.ConcurrencyVersion != request.ExpectedConcurrencyVersion.Value)
+                {
+                    return Conflict(new { detail = "ข้อมูลถูกแก้ไขโดยผู้ใช้อื่น กรุณาโหลดข้อมูลใหม่" });
+                }
+
+                toDelete.Active = 0;
+                toDelete.ModifyBy = userId.Value;
+                toDelete.ModifyDate = now;
+                toDelete.ConcurrencyVersion += 1;
+
+                await _bcg.SaveChangesAsync(cancellationToken);
+
+                return Ok(new
+                {
+                    id = toDelete.Id,
+                    message = "ลบข้อมูลประเภทการเช่าเรียบร้อยแล้ว"
+                });
+            }
+
             var code = request.RentalTypeCode?.Trim();
             var name = request.Name?.Trim();
 
@@ -71,20 +103,38 @@ namespace BCG_RPAS_API.Controllers.Master
                 return BadRequest(new { detail = "ชื่อประเภทการเช่าต้องไม่เกิน 200 ตัวอักษร" });
             }
 
-            var isDuplicate = await _bcg.MasterRentalTypes
-                .AsNoTracking()
-                .AnyAsync(rt => rt.Id != request.Id && rt.RentalTypeCode == code, cancellationToken);
-            if (isDuplicate)
-            {
-                return Conflict(new { detail = $"รหัสประเภทการเช่า '{code}' มีอยู่ในระบบแล้ว" });
-            }
+            var duplicateEntity = await _bcg.MasterRentalTypes
+                .SingleOrDefaultAsync(rt => rt.Id != request.Id && rt.RentalTypeCode == code, cancellationToken);
 
-            var now = DateTime.Now;
-            var activeFlag = request.Active == 0 ? 0 : 1;
+            if (duplicateEntity != null)
+            {
+                if (duplicateEntity.Active == 1)
+                {
+                    return Conflict(new { detail = $"รหัสประเภทการเช่า '{code}' มีอยู่ในระบบแล้ว" });
+                }
+
+                if (request.Id == 0)
+                {
+                    duplicateEntity.Name = name;
+                    duplicateEntity.Active = 1;
+                    duplicateEntity.ModifyBy = userId.Value;
+                    duplicateEntity.ModifyDate = now;
+                    duplicateEntity.ConcurrencyVersion += 1;
+
+                    await _bcg.SaveChangesAsync(cancellationToken);
+
+                    return Ok(new
+                    {
+                        id = duplicateEntity.Id,
+                        message = "เพิ่มข้อมูลประเภทการเช่าเรียบร้อยแล้ว"
+                    });
+                }
+
+                return Conflict(new { detail = $"รหัสประเภทการเช่า '{code}' ซ้ำกับรายการที่มีประวัติในระบบ" });
+            }
 
             if (request.Id == 0)
             {
-                // MasterRentalType has ValueGeneratedNever on Id
                 var maxId = await _bcg.MasterRentalTypes
                     .AsNoTracking()
                     .Select(rt => (int?)rt.Id)
@@ -95,7 +145,7 @@ namespace BCG_RPAS_API.Controllers.Master
                     Id = maxId + 1,
                     RentalTypeCode = code,
                     Name = name,
-                    Active = activeFlag,
+                    Active = 1,
                     ConcurrencyVersion = 1,
                     CreateBy = userId.Value,
                     CreateDate = now
@@ -113,7 +163,7 @@ namespace BCG_RPAS_API.Controllers.Master
             else
             {
                 var existing = await _bcg.MasterRentalTypes
-                    .SingleOrDefaultAsync(rt => rt.Id == request.Id, cancellationToken);
+                    .SingleOrDefaultAsync(rt => rt.Id == request.Id && rt.Active == 1, cancellationToken);
 
                 if (existing == null)
                 {
@@ -128,7 +178,7 @@ namespace BCG_RPAS_API.Controllers.Master
 
                 existing.RentalTypeCode = code;
                 existing.Name = name;
-                existing.Active = activeFlag;
+                existing.Active = 1;
                 existing.ModifyBy = userId.Value;
                 existing.ModifyDate = now;
                 existing.ConcurrencyVersion += 1;

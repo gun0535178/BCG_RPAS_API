@@ -19,12 +19,11 @@ namespace BCG_RPAS_API.Controllers.Master
 
         [HttpGet]
         public async Task<IActionResult> Get(
-            [FromQuery] bool includeInactive = false,
             CancellationToken cancellationToken = default)
         {
             var query =
                 from c in _bcg.MasterContracts.AsNoTracking()
-                where includeInactive || c.Active == 1
+                where c.Active == 1
                 orderby c.ContractNumber
                 select new
                 {
@@ -54,6 +53,39 @@ namespace BCG_RPAS_API.Controllers.Master
             var userId = await _getCurrentUser.GetCurrentUserId(cancellationToken);
             if (userId == null) return Unauthorized();
 
+            var now = DateTime.Now;
+
+            // กรณีสั่งลบแบบ Soft Delete (Active = 0) สำหรับรายการที่มีอยู่แล้ว
+            if (request.Id > 0 && request.Active == 0)
+            {
+                var toDelete = await _bcg.MasterContracts
+                    .SingleOrDefaultAsync(c => c.Id == request.Id && c.Active == 1, cancellationToken);
+
+                if (toDelete == null)
+                {
+                    return NotFound(new { detail = "ไม่พบข้อมูลสัญญาเช่าที่ต้องการลบ" });
+                }
+
+                if (request.ExpectedConcurrencyVersion.HasValue &&
+                    toDelete.ConcurrencyVersion != request.ExpectedConcurrencyVersion.Value)
+                {
+                    return Conflict(new { detail = "ข้อมูลถูกเปลี่ยนแปลงโดยผู้ใช้อื่น กรุณาโหลดข้อมูลใหม่" });
+                }
+
+                toDelete.Active = 0;
+                toDelete.ModifyBy = userId.Value;
+                toDelete.ModifyDate = now;
+                toDelete.ConcurrencyVersion += 1;
+
+                await _bcg.SaveChangesAsync(cancellationToken);
+
+                return Ok(new
+                {
+                    id = toDelete.Id,
+                    message = "ลบข้อมูลสัญญาเช่าเรียบร้อยแล้ว"
+                });
+            }
+
             var contractNumber = request.ContractNumber?.Trim();
             if (string.IsNullOrWhiteSpace(contractNumber))
             {
@@ -77,7 +109,7 @@ namespace BCG_RPAS_API.Controllers.Master
 
             var vendorExists = await _bcg.MasterVendors
                 .AsNoTracking()
-                .AnyAsync(v => v.Id == request.VendorId, cancellationToken);
+                .AnyAsync(v => v.Id == request.VendorId && v.Active == 1, cancellationToken);
             if (!vendorExists)
             {
                 return BadRequest(new { detail = "ไม่พบข้อมูลผู้ให้เช่า (Vendor) ที่เลือก" });
@@ -85,22 +117,44 @@ namespace BCG_RPAS_API.Controllers.Master
 
             var rentalTypeExists = await _bcg.MasterRentalTypes
                 .AsNoTracking()
-                .AnyAsync(rt => rt.Id == request.RentalTypeId, cancellationToken);
+                .AnyAsync(rt => rt.Id == request.RentalTypeId && rt.Active == 1, cancellationToken);
             if (!rentalTypeExists)
             {
                 return BadRequest(new { detail = "ไม่พบข้อมูลประเภทการเช่า (Rental Type) ที่เลือก" });
             }
 
-            var isDuplicate = await _bcg.MasterContracts
-                .AsNoTracking()
-                .AnyAsync(c => c.Id != request.Id && c.ContractNumber == contractNumber, cancellationToken);
-            if (isDuplicate)
-            {
-                return Conflict(new { detail = $"เลขที่สัญญา '{contractNumber}' มีอยู่ในระบบแล้ว" });
-            }
+            // ตรวจสอบว่ามีเลขที่สัญญานี้ในระบบหรือไม่ (รวมถึงรายการที่เคย Soft Delete Active = 0 เนื่องจาก Unique Index ใน DB)
+            var duplicateEntity = await _bcg.MasterContracts
+                .SingleOrDefaultAsync(c => c.Id != request.Id && c.ContractNumber == contractNumber, cancellationToken);
 
-            var now = DateTime.Now;
-            var activeFlag = request.Active == 0 ? 0 : 1;
+            if (duplicateEntity != null)
+            {
+                if (duplicateEntity.Active == 1)
+                {
+                    return Conflict(new { detail = $"เลขที่สัญญา '{contractNumber}' มีอยู่ในระบบแล้ว" });
+                }
+
+                // กรณีเป็นการสร้างใหม่ (Id == 0) แต่เลขที่สัญญานี้เคยถูก Soft Delete (Active == 0) ไว้ ให้ทำการเปิดใช้งานกลับมา (Reactivate) แทนการสร้างแถวซ้ำ
+                if (request.Id == 0)
+                {
+                    duplicateEntity.VendorId = request.VendorId;
+                    duplicateEntity.RentalTypeId = request.RentalTypeId;
+                    duplicateEntity.Active = 1;
+                    duplicateEntity.ModifyBy = userId.Value;
+                    duplicateEntity.ModifyDate = now;
+                    duplicateEntity.ConcurrencyVersion += 1;
+
+                    await _bcg.SaveChangesAsync(cancellationToken);
+
+                    return Ok(new
+                    {
+                        id = duplicateEntity.Id,
+                        message = "เพิ่มข้อมูลสัญญาเช่าเรียบร้อยแล้ว"
+                    });
+                }
+
+                return Conflict(new { detail = $"เลขที่สัญญา '{contractNumber}' ซ้ำกับรายการที่มีประวัติในระบบ" });
+            }
 
             if (request.Id == 0)
             {
@@ -109,7 +163,7 @@ namespace BCG_RPAS_API.Controllers.Master
                     ContractNumber = contractNumber,
                     VendorId = request.VendorId,
                     RentalTypeId = request.RentalTypeId,
-                    Active = activeFlag,
+                    Active = 1,
                     ConcurrencyVersion = 1,
                     CreateBy = userId.Value,
                     CreateDate = now
@@ -127,7 +181,7 @@ namespace BCG_RPAS_API.Controllers.Master
             else
             {
                 var existing = await _bcg.MasterContracts
-                    .SingleOrDefaultAsync(c => c.Id == request.Id, cancellationToken);
+                    .SingleOrDefaultAsync(c => c.Id == request.Id && c.Active == 1, cancellationToken);
 
                 if (existing == null)
                 {
@@ -143,7 +197,7 @@ namespace BCG_RPAS_API.Controllers.Master
                 existing.ContractNumber = contractNumber;
                 existing.VendorId = request.VendorId;
                 existing.RentalTypeId = request.RentalTypeId;
-                existing.Active = activeFlag;
+                existing.Active = 1;
                 existing.ModifyBy = userId.Value;
                 existing.ModifyDate = now;
                 existing.ConcurrencyVersion += 1;

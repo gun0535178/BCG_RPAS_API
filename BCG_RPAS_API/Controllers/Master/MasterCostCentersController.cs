@@ -19,11 +19,10 @@ namespace BCG_RPAS_API.Controllers.Master
 
         [HttpGet]
         public async Task<IActionResult> Get(
-            [FromQuery] bool includeInactive = false,
             CancellationToken cancellationToken = default)
         {
             var queryMasterCostCenters = from _data in _bcg.MasterCostCenters.AsNoTracking()
-                                         where includeInactive || _data.Active == 1
+                                         where _data.Active == 1
                                          orderby _data.CostCenterCode
                                          select new
                                          {
@@ -48,39 +47,91 @@ namespace BCG_RPAS_API.Controllers.Master
             var userId = await _getCurrentUser.GetCurrentUserId(cancellationToken);
             if (userId == null) return Unauthorized();
 
+            var now = DateTime.Now;
+
+            // Soft Delete (Active = 0)
+            if (request.Id > 0 && request.Active == 0)
+            {
+                var toDelete = await _bcg.MasterCostCenters
+                    .SingleOrDefaultAsync(c => c.Id == request.Id && c.Active == 1, cancellationToken);
+
+                if (toDelete == null)
+                {
+                    return NotFound(new { detail = "ไม่พบข้อมูลแผนก/ฝ่ายที่ต้องการลบ" });
+                }
+
+                if (request.ExpectedConcurrencyVersion.HasValue &&
+                    toDelete.ConcurrencyVersion != request.ExpectedConcurrencyVersion.Value)
+                {
+                    return Conflict(new { detail = "ข้อมูลถูกแก้ไขโดยผู้ใช้อื่น กรุณาโหลดข้อมูลใหม่" });
+                }
+
+                toDelete.Active = 0;
+                toDelete.ModifyBy = userId.Value;
+                toDelete.ModifyDate = now;
+                toDelete.ConcurrencyVersion += 1;
+
+                await _bcg.SaveChangesAsync(cancellationToken);
+
+                return Ok(new
+                {
+                    id = toDelete.Id,
+                    message = "ลบข้อมูลแผนก/ฝ่าย (Cost Center) เรียบร้อยแล้ว"
+                });
+            }
+
             var code = request.CostCenterCode?.Trim();
             var name = request.Name?.Trim();
 
             if (string.IsNullOrWhiteSpace(code))
             {
-                return BadRequest(new { detail = "กรุณาระบุรหัสศูนย์ต้นทุน (Cost Center Code)" });
+                return BadRequest(new { detail = "กรุณาระบุรหัสแผนก/ฝ่าย (Cost Center Code)" });
             }
 
             if (code.Length > 100)
             {
-                return BadRequest(new { detail = "รหัสศูนย์ต้นทุนต้องไม่เกิน 100 ตัวอักษร" });
+                return BadRequest(new { detail = "รหัสแผนก/ฝ่ายต้องไม่เกิน 100 ตัวอักษร" });
             }
 
             if (string.IsNullOrWhiteSpace(name))
             {
-                return BadRequest(new { detail = "กรุณาระบุชื่อศูนย์ต้นทุน/แผนก" });
+                return BadRequest(new { detail = "กรุณาระบุชื่อแผนก/ฝ่าย" });
             }
 
             if (name.Length > 200)
             {
-                return BadRequest(new { detail = "ชื่อศูนย์ต้นทุนต้องไม่เกิน 200 ตัวอักษร" });
+                return BadRequest(new { detail = "ชื่อแผนก/ฝ่ายต้องไม่เกิน 200 ตัวอักษร" });
             }
 
-            var isDuplicate = await _bcg.MasterCostCenters
-                .AsNoTracking()
-                .AnyAsync(c => c.Id != request.Id && c.CostCenterCode == code, cancellationToken);
-            if (isDuplicate)
+            var duplicateEntity = await _bcg.MasterCostCenters
+                .SingleOrDefaultAsync(c => c.Id != request.Id && c.CostCenterCode == code, cancellationToken);
+
+            if (duplicateEntity != null)
             {
-                return Conflict(new { detail = $"รหัสศูนย์ต้นทุน '{code}' มีอยู่ในระบบแล้ว" });
-            }
+                if (duplicateEntity.Active == 1)
+                {
+                    return Conflict(new { detail = $"รหัสแผนก/ฝ่าย '{code}' มีอยู่ในระบบแล้ว" });
+                }
 
-            var now = DateTime.Now;
-            var activeFlag = request.Active == 0 ? 0 : 1;
+                if (request.Id == 0)
+                {
+                    duplicateEntity.Name = name;
+                    duplicateEntity.Active = 1;
+                    duplicateEntity.ModifyBy = userId.Value;
+                    duplicateEntity.ModifyDate = now;
+                    duplicateEntity.ConcurrencyVersion += 1;
+
+                    await _bcg.SaveChangesAsync(cancellationToken);
+
+                    return Ok(new
+                    {
+                        id = duplicateEntity.Id,
+                        message = "เพิ่มข้อมูลแผนก/ฝ่าย (Cost Center) เรียบร้อยแล้ว"
+                    });
+                }
+
+                return Conflict(new { detail = $"รหัสแผนก/ฝ่าย '{code}' ซ้ำกับรายการที่มีประวัติในระบบ" });
+            }
 
             if (request.Id == 0)
             {
@@ -88,7 +139,7 @@ namespace BCG_RPAS_API.Controllers.Master
                 {
                     CostCenterCode = code,
                     Name = name,
-                    Active = activeFlag,
+                    Active = 1,
                     ConcurrencyVersion = 1,
                     CreateBy = userId.Value,
                     CreateDate = now
@@ -100,17 +151,17 @@ namespace BCG_RPAS_API.Controllers.Master
                 return Ok(new
                 {
                     id = entity.Id,
-                    message = "เพิ่มข้อมูลศูนย์ต้นทุน (Cost Center) เรียบร้อยแล้ว"
+                    message = "เพิ่มข้อมูลแผนก/ฝ่าย (Cost Center) เรียบร้อยแล้ว"
                 });
             }
             else
             {
                 var existing = await _bcg.MasterCostCenters
-                    .SingleOrDefaultAsync(c => c.Id == request.Id, cancellationToken);
+                    .SingleOrDefaultAsync(c => c.Id == request.Id && c.Active == 1, cancellationToken);
 
                 if (existing == null)
                 {
-                    return NotFound(new { detail = "ไม่พบข้อมูลศูนย์ต้นทุนที่ต้องการแก้ไข" });
+                    return NotFound(new { detail = "ไม่พบข้อมูลแผนก/ฝ่ายที่ต้องการแก้ไข" });
                 }
 
                 if (request.ExpectedConcurrencyVersion.HasValue &&
@@ -121,7 +172,7 @@ namespace BCG_RPAS_API.Controllers.Master
 
                 existing.CostCenterCode = code;
                 existing.Name = name;
-                existing.Active = activeFlag;
+                existing.Active = 1;
                 existing.ModifyBy = userId.Value;
                 existing.ModifyDate = now;
                 existing.ConcurrencyVersion += 1;
@@ -131,7 +182,7 @@ namespace BCG_RPAS_API.Controllers.Master
                 return Ok(new
                 {
                     id = existing.Id,
-                    message = "บันทึกการแก้ไขข้อมูลศูนย์ต้นทุนเรียบร้อยแล้ว"
+                    message = "บันทึกการแก้ไขข้อมูลแผนก/ฝ่ายเรียบร้อยแล้ว"
                 });
             }
         }
