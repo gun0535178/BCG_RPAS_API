@@ -41,6 +41,7 @@ namespace BCG_RPAS_API.Controllers.Master
         }
 
         [HttpPost]
+        [Authorize(Roles = "MANAGER,EXECUTIVE,ADMINISTRATOR")]
         public async Task<IActionResult> Upsert(
             [FromBody] UpsertVendorModel request,
             CancellationToken cancellationToken)

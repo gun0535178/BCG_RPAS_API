@@ -46,6 +46,7 @@ namespace BCG_RPAS_API.Controllers.Master
         }
 
         [HttpPost]
+        [Authorize(Roles = "MANAGER,EXECUTIVE,ADMINISTRATOR")]
         public async Task<IActionResult> Upsert(
             [FromBody] UpsertContractModel request,
             CancellationToken cancellationToken)
@@ -86,17 +87,6 @@ namespace BCG_RPAS_API.Controllers.Master
                 });
             }
 
-            var contractNumber = request.ContractNumber?.Trim();
-            if (string.IsNullOrWhiteSpace(contractNumber))
-            {
-                return BadRequest(new { detail = "กรุณาระบุเลขที่สัญญา (Contract Number)" });
-            }
-
-            if (contractNumber.Length > 100)
-            {
-                return BadRequest(new { detail = "เลขที่สัญญาต้องไม่เกิน 100 ตัวอักษร" });
-            }
-
             if (request.VendorId <= 0)
             {
                 return BadRequest(new { detail = "กรุณาเลือกผู้ให้เช่า (Vendor)" });
@@ -123,44 +113,31 @@ namespace BCG_RPAS_API.Controllers.Master
                 return BadRequest(new { detail = "ไม่พบข้อมูลประเภทการเช่า (Rental Type) ที่เลือก" });
             }
 
-            // ตรวจสอบว่ามีเลขที่สัญญานี้ในระบบหรือไม่ (รวมถึงรายการที่เคย Soft Delete Active = 0 เนื่องจาก Unique Index ใน DB)
-            var duplicateEntity = await _bcg.MasterContracts
-                .SingleOrDefaultAsync(c => c.Id != request.Id && c.ContractNumber == contractNumber, cancellationToken);
-
-            if (duplicateEntity != null)
-            {
-                if (duplicateEntity.Active == 1)
-                {
-                    return Conflict(new { detail = $"เลขที่สัญญา '{contractNumber}' มีอยู่ในระบบแล้ว" });
-                }
-
-                // กรณีเป็นการสร้างใหม่ (Id == 0) แต่เลขที่สัญญานี้เคยถูก Soft Delete (Active == 0) ไว้ ให้ทำการเปิดใช้งานกลับมา (Reactivate) แทนการสร้างแถวซ้ำ
-                if (request.Id == 0)
-                {
-                    duplicateEntity.VendorId = request.VendorId;
-                    duplicateEntity.RentalTypeId = request.RentalTypeId;
-                    duplicateEntity.Active = 1;
-                    duplicateEntity.ModifyBy = userId.Value;
-                    duplicateEntity.ModifyDate = now;
-                    duplicateEntity.ConcurrencyVersion += 1;
-
-                    await _bcg.SaveChangesAsync(cancellationToken);
-
-                    return Ok(new
-                    {
-                        id = duplicateEntity.Id,
-                        message = "เพิ่มข้อมูลสัญญาเช่าเรียบร้อยแล้ว"
-                    });
-                }
-
-                return Conflict(new { detail = $"เลขที่สัญญา '{contractNumber}' ซ้ำกับรายการที่มีประวัติในระบบ" });
-            }
-
             if (request.Id == 0)
             {
+                // Auto-generate เลขที่สัญญาในรูปแบบ RENT-{Year}-{NNN} เช่น RENT-2026-001
+                var yearPrefix = $"RENT-{now.Year}-";
+                var existingNumbers = await _bcg.MasterContracts
+                    .AsNoTracking()
+                    .Where(c => c.ContractNumber.StartsWith(yearPrefix))
+                    .Select(c => c.ContractNumber)
+                    .ToListAsync(cancellationToken);
+
+                var maxSeq = 0;
+                foreach (var num in existingNumbers)
+                {
+                    var suffix = num.Substring(yearPrefix.Length);
+                    if (int.TryParse(suffix, out var parsed) && parsed > maxSeq)
+                    {
+                        maxSeq = parsed;
+                    }
+                }
+
+                var generatedNumber = $"{yearPrefix}{(maxSeq + 1):D3}";
+
                 var entity = new MasterContract
                 {
-                    ContractNumber = contractNumber,
+                    ContractNumber = generatedNumber,
                     VendorId = request.VendorId,
                     RentalTypeId = request.RentalTypeId,
                     Active = 1,
@@ -175,7 +152,8 @@ namespace BCG_RPAS_API.Controllers.Master
                 return Ok(new
                 {
                     id = entity.Id,
-                    message = "เพิ่มข้อมูลสัญญาเช่าเรียบร้อยแล้ว"
+                    contractNumber = entity.ContractNumber,
+                    message = $"เพิ่มสัญญาเช่า '{entity.ContractNumber}' เรียบร้อยแล้ว"
                 });
             }
             else
@@ -194,7 +172,7 @@ namespace BCG_RPAS_API.Controllers.Master
                     return Conflict(new { detail = "ข้อมูลถูกแก้ไขโดยผู้ใช้อื่น กรุณาโหลดข้อมูลใหม่" });
                 }
 
-                existing.ContractNumber = contractNumber;
+                // คงเลขที่สัญญาเดิมไว้ และอัปเดตเฉพาะ VendorId / RentalTypeId
                 existing.VendorId = request.VendorId;
                 existing.RentalTypeId = request.RentalTypeId;
                 existing.Active = 1;
@@ -207,7 +185,8 @@ namespace BCG_RPAS_API.Controllers.Master
                 return Ok(new
                 {
                     id = existing.Id,
-                    message = "บันทึกการแก้ไขข้อมูลสัญญาเช่าเรียบร้อยแล้ว"
+                    contractNumber = existing.ContractNumber,
+                    message = $"บันทึกการแก้ไขข้อมูลสัญญาเช่า '{existing.ContractNumber}' เรียบร้อยแล้ว"
                 });
             }
         }
