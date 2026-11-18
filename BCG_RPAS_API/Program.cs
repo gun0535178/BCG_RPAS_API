@@ -7,6 +7,10 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// บันทึก _logger ลงไฟล์รายวันในโฟลเดอร์ Logs/
+var apiLogDir = Path.Combine(builder.Environment.ContentRootPath, "Logs");
+builder.Logging.AddProvider(new DailyFileLoggerProvider(apiLogDir, "api"));
+
 // Add services to the container.
 //builder.Services.AddControllersWithViews(); // API ไม่ใช้
 
@@ -153,6 +157,9 @@ app.UseCors("AllowWebOrigin");
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// บันทึก Inbound / Outbound Payload ของทุก /api/... ลงไฟล์ Log
+app.UseMiddleware<HttpPayloadLoggingMiddleware>();
 
 app.MapControllers();
 app.MapStaticAssets();

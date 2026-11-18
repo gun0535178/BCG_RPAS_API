@@ -144,7 +144,8 @@ namespace BCG_RPAS_API.Services
                 job.MaxAttempts = Math.Min(100, currentAttemptNumber);
             }
 
-            var traceId = Guid.NewGuid().ToString("N");
+            var correlationId = $"FLOW-REQ-{job.RequestId:D4}";
+            var traceId = $"{correlationId}|ATTEMPT-{currentAttemptNumber}";
 
             // บันทึก Log การเริ่มส่งข้อมูล
             bcg.Logs.Add(new Log
@@ -234,6 +235,10 @@ namespace BCG_RPAS_API.Services
                     CreateBy = effectiveActorId,
                     CreateDate = finishTime
                 });
+
+                _logger.LogInformation(
+                    "[CorrelationId: {CorrelationId}] [STEP: ERP_SYNC_SUCCEEDED (ส่งข้อมูลไป ERP สำเร็จ ครั้งที่ {Attempt}/{Max})]\n  Actor   : SYSTEM_WORKER | JobId: #{JobId}\n  OUTBOUND_TO_ERP  [{StartTime:dd/MM/yyyy HH:mm:ss.fff}] : {Outbound}\n  INBOUND_FROM_ERP [{FinishTime:dd/MM/yyyy HH:mm:ss.fff}] : HTTP 200 OK -> {Inbound}",
+                    correlationId, currentAttemptNumber, job.MaxAttempts, job.Id, startTime, job.PayloadSnapshot, finishTime, responseJson);
             }
             else
             {
@@ -247,6 +252,13 @@ namespace BCG_RPAS_API.Services
                 });
 
                 bool hasMoreRetries = currentAttemptNumber < job.MaxAttempts;
+                var stepTitle = hasMoreRetries
+                    ? $"ERP_SYNC_RETRY_SCHEDULED (ส่งไป ERP ไม่สำเร็จ ครั้งที่ {currentAttemptNumber}/{job.MaxAttempts} - รอส่งซ้ำ)"
+                    : $"ERP_SYNC_FAILED_FINAL (ส่งไป ERP ล้มเหลวครบ {job.MaxAttempts} ครั้ง - รอผู้รับผิดชอบตรวจสอบ)";
+
+                _logger.LogWarning(
+                    "[CorrelationId: {CorrelationId}] [STEP: {StepTitle}]\n  Actor   : SYSTEM_WORKER | JobId: #{JobId}\n  OUTBOUND_TO_ERP  [{StartTime:dd/MM/yyyy HH:mm:ss.fff}] : {Outbound}\n  INBOUND_FROM_ERP [{FinishTime:dd/MM/yyyy HH:mm:ss.fff}] : HTTP 503 ERROR -> {Inbound}",
+                    correlationId, stepTitle, job.Id, startTime, job.PayloadSnapshot, finishTime, responseJson);
                 // ต้องใช้ 'TransientFailure' หรือ 'PermanentFailure' ตาม CK_ErpAttempts_Outcome ใน BCG_RPAS.sql!
                 var attemptOutcome = hasMoreRetries ? "TransientFailure" : "PermanentFailure";
 
