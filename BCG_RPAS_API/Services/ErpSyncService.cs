@@ -57,7 +57,13 @@ namespace BCG_RPAS_API.Services
         }
 
         /// <summary>
-        /// ประมวลผล ErpJob รายการเดียว (รองรับทั้งจาก Background Worker และการกดส่งซ้ำด้วยตนเอง)
+        /// ประมวลผล ErpJob รายการเดียว โดยปฏิบัติตาม CHECK CONSTRAINTS ใน BCG_RPAS.sql อย่างเคร่งครัด:
+        /// - CK_ErpJobs_Lease: Processing ต้องมี LockedUntilDate & LockToken, สถานะอื่นต้องเป็น NULL
+        /// - CK_ErpJobs_Schedule: Pending/RetryScheduled ต้องมี NextAttemptDate, สถานะอื่นต้องเป็น NULL
+        /// - CK_ErpJobs_Completion: Succeeded/Failed ต้องมี CompletedDate, สถานะอื่นต้องเป็น NULL
+        /// - CK_ErpJobs_RetryBudget: Pending/RetryScheduled ต้องมี AttemptCount < MaxAttempts
+        /// - CK_ErpAttempts_Outcome: Outcome IN ('InProgress','Succeeded','TransientFailure','PermanentFailure','Unknown')
+        /// - UQ_ErpAttempts_JobAttempt: UNIQUE (JobId, AttemptNumber)
         /// </summary>
         public async Task<bool> ProcessSingleJobAsync(
             int jobId,
@@ -80,7 +86,6 @@ namespace BCG_RPAS_API.Services
                 return false;
             }
 
-            // หากส่งสำเร็จไปแล้ว ไม่ต้องส่งซ้ำอีก
             if (job.Status == DataFactory.SyncStatus.SyncStatusSucceeded)
             {
                 return false;
@@ -98,7 +103,7 @@ namespace BCG_RPAS_API.Services
                 return false;
             }
 
-            // หา ActorId สำหรับบันทึก Log/CreateBy (ใช้ผู้กดสั่ง หรือ System User หรือผู้สร้างงานเดิม)
+            // หา ActorId สำหรับบันทึก Log/CreateBy (ใช้ผู้กดสั่ง หรือ System User Id=1)
             int effectiveActorId = actorUserId ?? job.ModifyBy ?? job.CreateBy;
             if (!actorUserId.HasValue)
             {
@@ -116,29 +121,32 @@ namespace BCG_RPAS_API.Services
                 }
             }
 
-            var now = DateTime.Now;
+            var startTime = DateTime.Now;
 
-            // กรณีงานเป็น Failed (ครบ 5 ครั้งแล้ว) และผู้รับผิดชอบกดปุ่ม "ส่งข้อมูลซ้ำ" (forceImmediate) -> รีเซ็ตรอบการส่งใหม่
+            // หากงานเคยล้มเหลวครบโควตา (AttemptCount >= MaxAttempts) แล้วผู้รับผิดชอบกดปุ่ม "ส่งข้อมูลซ้ำ" (forceImmediate)
+            // ให้เพิ่มโควตา MaxAttempts ครั้งละ 5 (ไม่เกิน 100 ตาม CK_ErpJobs_Attempts) เพื่อไม่ให้ AttemptNumber ซ้ำกับ UQ_ErpAttempts_JobAttempt
             if (forceImmediate && job.AttemptCount >= job.MaxAttempts)
             {
-                job.AttemptCount = 0;
+                job.MaxAttempts = Math.Min(100, job.MaxAttempts + 5);
             }
 
-            var currentAttemptNumber = job.AttemptCount + 1;
+            // หา AttemptNumber ถัดไปที่ไม่ซ้ำกับประวัติเดิมในตาราง ErpAttempts
+            var maxExistingAttemptQuery =
+                from _data in bcg.ErpAttempts.AsNoTracking()
+                where _data.JobId == job.Id
+                select (int?)_data.AttemptNumber;
+
+            var maxExistingAttempt = await maxExistingAttemptQuery.MaxAsync(cancellationToken) ?? 0;
+            var currentAttemptNumber = Math.Max(job.AttemptCount + 1, maxExistingAttempt + 1);
+
+            if (currentAttemptNumber > job.MaxAttempts)
+            {
+                job.MaxAttempts = Math.Min(100, currentAttemptNumber);
+            }
+
             var traceId = Guid.NewGuid().ToString("N");
 
-            // บันทึกการเริ่มต้นส่งข้อมูล
-            job.Status = DataFactory.SyncStatus.SyncStatusProcessing;
-            job.AttemptCount = currentAttemptNumber;
-            job.ModifyBy = effectiveActorId;
-            job.ModifyDate = now;
-            job.ConcurrencyVersion += 1;
-
-            rentalRequest.SyncStatus = DataFactory.SyncStatus.SyncStatusProcessing;
-            rentalRequest.ModifyBy = effectiveActorId;
-            rentalRequest.ModifyDate = now;
-            rentalRequest.ConcurrencyVersion += 1;
-
+            // บันทึก Log การเริ่มส่งข้อมูล
             bcg.Logs.Add(new Log
             {
                 RequestId = job.RequestId,
@@ -147,17 +155,34 @@ namespace BCG_RPAS_API.Services
                 FromStatusId = DataFactory.StatusApproved,
                 ToStatusId = DataFactory.StatusApproved,
                 RequestRevisionId = job.RequestRevisionId,
-                ActionDate = now,
+                ActionDate = startTime,
                 Details = $"เริ่มส่งข้อมูลไปยัง ERP ครั้งที่ {currentAttemptNumber}/{job.MaxAttempts}",
                 TraceId = traceId,
                 Active = 1,
                 CreateBy = effectiveActorId,
-                CreateDate = now
+                CreateDate = startTime
             });
 
-            // จำลองการส่งข้อมูลไปยังระบบ ERP (Mock ERP Execution)
+            // จำลองการส่งข้อมูลไปยังระบบ ERP (FinishedDate >= StartedDate เสมอตาม CK_ErpAttempts_Finished)
             var finishTime = DateTime.Now;
+            if (finishTime < startTime)
+            {
+                finishTime = startTime;
+            }
+
             bool isSuccess = !_simulateFailureMode;
+
+            // เคลียร์ Lease fields เสมอเมื่อจบการทำงาน (ตาม CK_ErpJobs_Lease: Status <> 'Processing' ต้องมี LockedUntilDate IS NULL AND LockToken IS NULL)
+            job.LockedUntilDate = null;
+            job.LockToken = null;
+            job.AttemptCount = currentAttemptNumber;
+            job.ModifyBy = effectiveActorId;
+            job.ModifyDate = finishTime;
+            job.ConcurrencyVersion += 1;
+
+            rentalRequest.ModifyBy = effectiveActorId;
+            rentalRequest.ModifyDate = finishTime;
+            rentalRequest.ConcurrencyVersion += 1;
 
             if (isSuccess)
             {
@@ -174,10 +199,10 @@ namespace BCG_RPAS_API.Services
                 {
                     JobId = job.Id,
                     AttemptNumber = currentAttemptNumber,
-                    StartedDate = now,
+                    StartedDate = startTime,
                     FinishedDate = finishTime,
-                    Outcome = "Succeeded",
-                    HttpStatus = 200,
+                    Outcome = "Succeeded", // ตรงตาม CK_ErpAttempts_Outcome
+                    HttpStatus = 200,      // ตรงตาม CK_ErpAttempts_Success (200..299)
                     Error = null,
                     ResponseSummary = responseJson,
                     TraceId = traceId,
@@ -187,10 +212,10 @@ namespace BCG_RPAS_API.Services
                 });
 
                 job.Status = DataFactory.SyncStatus.SyncStatusSucceeded;
-                job.ExternalReference = erpRef;
+                job.ExternalReference = erpRef; // ตรงตาม CK_ErpJobs_Reference
                 job.LastError = null;
-                job.CompletedDate = finishTime;
-                job.NextAttemptDate = null;
+                job.CompletedDate = finishTime; // ตรงตาม CK_ErpJobs_Completion
+                job.NextAttemptDate = null;     // ตรงตาม CK_ErpJobs_Schedule
 
                 rentalRequest.SyncStatus = DataFactory.SyncStatus.SyncStatusSucceeded;
 
@@ -212,7 +237,7 @@ namespace BCG_RPAS_API.Services
             }
             else
             {
-                var errorMessage = "เซิร์ฟเวอร์ ERP ไม่ตอบสนอง หรือปฏิเสธการเชื่อมต่อชั่วคราว (HTTP 503 Service Unavailable)";
+                var errorMessage = "เซิร์ฟเวอร์ ERP ไม่ตอบสนอง หรือปฏิเสธการเชื่อมต่อชั่วคราว (HTTP 503)";
                 var responseJson = JsonSerializer.Serialize(new
                 {
                     status = "ERROR",
@@ -221,15 +246,19 @@ namespace BCG_RPAS_API.Services
                     failedAt = finishTime
                 });
 
+                bool hasMoreRetries = currentAttemptNumber < job.MaxAttempts;
+                // ต้องใช้ 'TransientFailure' หรือ 'PermanentFailure' ตาม CK_ErpAttempts_Outcome ใน BCG_RPAS.sql!
+                var attemptOutcome = hasMoreRetries ? "TransientFailure" : "PermanentFailure";
+
                 bcg.ErpAttempts.Add(new ErpAttempt
                 {
                     JobId = job.Id,
                     AttemptNumber = currentAttemptNumber,
-                    StartedDate = now,
+                    StartedDate = startTime,
                     FinishedDate = finishTime,
-                    Outcome = "Failed",
+                    Outcome = attemptOutcome,
                     HttpStatus = 503,
-                    Error = errorMessage,
+                    Error = errorMessage, // ตรงตาม CK_ErpAttempts_Error (ต้องมี Error เมื่อเป็น TransientFailure/PermanentFailure)
                     ResponseSummary = responseJson,
                     TraceId = traceId,
                     Active = 1,
@@ -239,12 +268,12 @@ namespace BCG_RPAS_API.Services
 
                 job.LastError = errorMessage;
 
-                if (currentAttemptNumber < job.MaxAttempts)
+                if (hasMoreRetries)
                 {
-                    // ยังไม่ครบจำนวนครั้งสูงสุด (5 ครั้ง) -> วางแผนส่งซ้ำตามเงื่อนไข
                     var nextRetry = finishTime.AddSeconds(20);
                     job.Status = DataFactory.SyncStatus.SyncStatusRetryScheduled;
-                    job.NextAttemptDate = nextRetry;
+                    job.NextAttemptDate = nextRetry; // ตรงตาม CK_ErpJobs_Schedule
+                    job.CompletedDate = null;        // ตรงตาม CK_ErpJobs_Completion
 
                     rentalRequest.SyncStatus = DataFactory.SyncStatus.SyncStatusRetryScheduled;
 
@@ -267,10 +296,9 @@ namespace BCG_RPAS_API.Services
                 }
                 else
                 {
-                    // ครบจำนวนครั้งสูงสุด (5 ครั้ง) แล้วยังไม่สำเร็จ -> บันทึกว่าล้มเหลวและรอผู้รับผิดชอบมาตรวจสอบ
                     job.Status = DataFactory.SyncStatus.SyncStatusFailed;
-                    job.NextAttemptDate = null;
-                    job.CompletedDate = finishTime;
+                    job.NextAttemptDate = null;     // ตรงตาม CK_ErpJobs_Schedule
+                    job.CompletedDate = finishTime; // ตรงตาม CK_ErpJobs_Completion
 
                     rentalRequest.SyncStatus = DataFactory.SyncStatus.SyncStatusFailed;
 
