@@ -22,23 +22,23 @@ namespace BCG_RPAS_API.Controllers.Master
             CancellationToken cancellationToken = default)
         {
             var query =
-                from c in _bcg.MasterContracts.AsNoTracking()
-                where c.Active == 1
-                orderby c.ContractNumber
+                from _data in _bcg.MasterContracts.AsNoTracking()
+                where _data.Active == 1
+                orderby _data.ContractNumber
                 select new
                 {
-                    c.Id,
-                    c.ContractNumber,
-                    c.VendorId,
-                    VendorCode = c.Vendor.VendorCode,
-                    VendorName = c.Vendor.Name,
-                    c.RentalTypeId,
-                    RentalTypeCode = c.RentalType.RentalTypeCode,
-                    RentalTypeName = c.RentalType.Name,
-                    c.Active,
-                    c.ConcurrencyVersion,
-                    c.ModifyDate,
-                    c.CreateDate
+                    _data.Id,
+                    _data.ContractNumber,
+                    _data.VendorId,
+                    VendorCode = _data.Vendor.VendorCode,
+                    VendorName = _data.Vendor.Name,
+                    _data.RentalTypeId,
+                    RentalTypeCode = _data.RentalType.RentalTypeCode,
+                    RentalTypeName = _data.RentalType.Name,
+                    _data.Active,
+                    _data.ConcurrencyVersion,
+                    _data.ModifyDate,
+                    _data.CreateDate
                 };
 
             var result = await query.ToListAsync(cancellationToken);
@@ -59,8 +59,13 @@ namespace BCG_RPAS_API.Controllers.Master
             // กรณีสั่งลบแบบ Soft Delete (Active = 0) สำหรับรายการที่มีอยู่แล้ว
             if (request.Id > 0 && request.Active == 0)
             {
-                var toDelete = await _bcg.MasterContracts
-                    .SingleOrDefaultAsync(c => c.Id == request.Id && c.Active == 1, cancellationToken);
+                var deleteQuery =
+                    from _data in _bcg.MasterContracts
+                    where _data.Active == 1
+                        && _data.Id == request.Id
+                    select _data;
+
+                var toDelete = await deleteQuery.SingleOrDefaultAsync(cancellationToken);
 
                 if (toDelete == null)
                 {
@@ -97,18 +102,24 @@ namespace BCG_RPAS_API.Controllers.Master
                 return BadRequest(new { detail = "กรุณาเลือกประเภทการเช่า (Rental Type)" });
             }
 
-            var vendorExists = await _bcg.MasterVendors
-                .AsNoTracking()
-                .AnyAsync(v => v.Id == request.VendorId && v.Active == 1, cancellationToken);
-            if (!vendorExists)
+            var vendorQuery =
+                from _data in _bcg.MasterVendors.AsNoTracking()
+                where _data.Active == 1
+                    && _data.Id == request.VendorId
+                select _data.Id;
+
+            if (!await vendorQuery.AnyAsync(cancellationToken))
             {
                 return BadRequest(new { detail = "ไม่พบข้อมูลผู้ให้เช่า (Vendor) ที่เลือก" });
             }
 
-            var rentalTypeExists = await _bcg.MasterRentalTypes
-                .AsNoTracking()
-                .AnyAsync(rt => rt.Id == request.RentalTypeId && rt.Active == 1, cancellationToken);
-            if (!rentalTypeExists)
+            var rentalTypeQuery =
+                from _data in _bcg.MasterRentalTypes.AsNoTracking()
+                where _data.Active == 1
+                    && _data.Id == request.RentalTypeId
+                select _data.Id;
+
+            if (!await rentalTypeQuery.AnyAsync(cancellationToken))
             {
                 return BadRequest(new { detail = "ไม่พบข้อมูลประเภทการเช่า (Rental Type) ที่เลือก" });
             }
@@ -117,11 +128,12 @@ namespace BCG_RPAS_API.Controllers.Master
             {
                 // Auto-generate เลขที่สัญญาในรูปแบบ RENT-{Year}-{NNN} เช่น RENT-2026-001
                 var yearPrefix = $"RENT-{now.Year}-";
-                var existingNumbers = await _bcg.MasterContracts
-                    .AsNoTracking()
-                    .Where(c => c.ContractNumber.StartsWith(yearPrefix))
-                    .Select(c => c.ContractNumber)
-                    .ToListAsync(cancellationToken);
+                var numberQuery =
+                    from _data in _bcg.MasterContracts.AsNoTracking()
+                    where _data.ContractNumber.StartsWith(yearPrefix)
+                    select _data.ContractNumber;
+
+                var existingNumbers = await numberQuery.ToListAsync(cancellationToken);
 
                 var maxSeq = 0;
                 foreach (var num in existingNumbers)
@@ -158,8 +170,13 @@ namespace BCG_RPAS_API.Controllers.Master
             }
             else
             {
-                var existing = await _bcg.MasterContracts
-                    .SingleOrDefaultAsync(c => c.Id == request.Id && c.Active == 1, cancellationToken);
+                var existingQuery =
+                    from _data in _bcg.MasterContracts
+                    where _data.Active == 1
+                        && _data.Id == request.Id
+                    select _data;
+
+                var existing = await existingQuery.SingleOrDefaultAsync(cancellationToken);
 
                 if (existing == null)
                 {
@@ -172,7 +189,6 @@ namespace BCG_RPAS_API.Controllers.Master
                     return Conflict(new { detail = "ข้อมูลถูกแก้ไขโดยผู้ใช้อื่น กรุณาโหลดข้อมูลใหม่" });
                 }
 
-                // คงเลขที่สัญญาเดิมไว้ และอัปเดตเฉพาะ VendorId / RentalTypeId
                 existing.VendorId = request.VendorId;
                 existing.RentalTypeId = request.RentalTypeId;
                 existing.Active = 1;

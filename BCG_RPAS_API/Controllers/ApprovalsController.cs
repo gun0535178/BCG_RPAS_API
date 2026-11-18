@@ -35,46 +35,46 @@ namespace BCG_RPAS_API.Controllers
                 }
 
                 var query =
-                    from s in _bcg.ApprovalSteps.AsNoTracking()
-                    where s.Active == 1
-                        && s.ApproverId == approverId.Value
-                        && s.Status == DataFactory.StepStatus.StepStatusPending
-                        && s.Request.Active == 1
-                        && s.RequestRevision.Active == 1
-                        && s.RequestRevision.RevisionNumber == s.Request.CurrentRevision
-                        && ((s.StepNumber == 1 && s.Request.StatusId == DataFactory.StatusPendingManager) ||
-                            (s.StepNumber == 2 && s.Request.StatusId == DataFactory.StatusPendingExecutive))
-                    orderby s.Request.SubmittedDate, s.Request.Id
+                    from _data in _bcg.ApprovalSteps.AsNoTracking()
+                    where _data.Active == 1
+                        && _data.ApproverId == approverId.Value
+                        && _data.Status == DataFactory.StepStatus.StepStatusPending
+                        && _data.Request.Active == 1
+                        && _data.RequestRevision.Active == 1
+                        && _data.RequestRevision.RevisionNumber == _data.Request.CurrentRevision
+                        && ((_data.StepNumber == 1 && _data.Request.StatusId == DataFactory.StatusPendingManager) ||
+                            (_data.StepNumber == 2 && _data.Request.StatusId == DataFactory.StatusPendingExecutive))
+                    orderby _data.Request.SubmittedDate, _data.Request.Id
                     select new ApprovalInboxItemModel
                     {
-                        RequestId = s.RequestId,
-                        StepId = s.Id,
-                        StepNumber = s.StepNumber,
-                        ApprovalRoleId = s.ApprovalRoleId,
-                        ApprovalRoleCode = s.ApprovalRole.RoleCode,
-                        ApprovalRoleName = s.ApprovalRole.Name,
-                        RequesterId = s.Request.RequesterId,
-                        RequesterName = s.Request.Requester.DisplayName,
-                        ContractId = s.Request.ContractId,
-                        ContractNumber = s.Request.MasterContract != null ? s.Request.MasterContract.ContractNumber : null,
-                        VendorName = s.Request.Vendor != null ? s.Request.Vendor.Name : null,
-                        RentalTypeName = s.Request.MasterContract != null ? s.Request.MasterContract.RentalType.Name : null,
-                        CostCenterCode = s.Request.CostCenter != null ? s.Request.CostCenter.CostCenterCode : null,
-                        CostCenterName = s.Request.CostCenter != null ? s.Request.CostCenter.Name : null,
-                        PeriodStartDate = s.Request.PeriodStartDate,
-                        PeriodEndDate = s.Request.PeriodEndDate,
-                        Amount = s.Request.Amount,
-                        VatRate = s.Request.VatRate,
-                        VatAmount = s.Request.VatAmount,
-                        TotalAmount = s.Request.TotalAmount,
-                        Notes = s.Request.Notes,
-                        StatusId = s.Request.StatusId,
-                        StatusCode = s.Request.Status.StatusCode,
-                        StatusName = s.Request.Status.Name,
-                        CurrentRevision = s.Request.CurrentRevision,
-                        SubmittedDate = s.Request.SubmittedDate,
-                        RequestConcurrencyVersion = s.Request.ConcurrencyVersion,
-                        StepConcurrencyVersion = s.ConcurrencyVersion
+                        RequestId = _data.RequestId,
+                        StepId = _data.Id,
+                        StepNumber = _data.StepNumber,
+                        ApprovalRoleId = _data.ApprovalRoleId,
+                        ApprovalRoleCode = _data.ApprovalRole.RoleCode,
+                        ApprovalRoleName = _data.ApprovalRole.Name,
+                        RequesterId = _data.Request.RequesterId,
+                        RequesterName = _data.Request.Requester.DisplayName,
+                        ContractId = _data.Request.ContractId,
+                        ContractNumber = _data.Request.MasterContract != null ? _data.Request.MasterContract.ContractNumber : null,
+                        VendorName = _data.Request.Vendor != null ? _data.Request.Vendor.Name : null,
+                        RentalTypeName = _data.Request.MasterContract != null ? _data.Request.MasterContract.RentalType.Name : null,
+                        CostCenterCode = _data.Request.CostCenter != null ? _data.Request.CostCenter.CostCenterCode : null,
+                        CostCenterName = _data.Request.CostCenter != null ? _data.Request.CostCenter.Name : null,
+                        PeriodStartDate = _data.Request.PeriodStartDate,
+                        PeriodEndDate = _data.Request.PeriodEndDate,
+                        Amount = _data.Request.Amount,
+                        VatRate = _data.Request.VatRate,
+                        VatAmount = _data.Request.VatAmount,
+                        TotalAmount = _data.Request.TotalAmount,
+                        Notes = _data.Request.Notes,
+                        StatusId = _data.Request.StatusId,
+                        StatusCode = _data.Request.Status.StatusCode,
+                        StatusName = _data.Request.Status.Name,
+                        CurrentRevision = _data.Request.CurrentRevision,
+                        SubmittedDate = _data.Request.SubmittedDate,
+                        RequestConcurrencyVersion = _data.Request.ConcurrencyVersion,
+                        StepConcurrencyVersion = _data.ConcurrencyVersion
                     };
 
                 var items = await query.ToListAsync(cancellationToken);
@@ -125,9 +125,13 @@ namespace BCG_RPAS_API.Controllers
                 var reason = string.IsNullOrWhiteSpace(request.Reason) ? null : request.Reason.Trim();
 
                 // 1. ดึงข้อมูลคำขอและ Revision ปัจจุบัน
-                var rentalRequest = await _bcg.RentalRequests
-                    .AsNoTracking()
-                    .SingleOrDefaultAsync(r => r.Id == id && r.Active == 1, cancellationToken);
+                var requestQuery =
+                    from _data in _bcg.RentalRequests.AsNoTracking()
+                    where _data.Active == 1
+                        && _data.Id == id
+                    select _data;
+
+                var rentalRequest = await requestQuery.SingleOrDefaultAsync(cancellationToken);
 
                 if (rentalRequest == null)
                 {
@@ -164,13 +168,14 @@ namespace BCG_RPAS_API.Controllers
                     return BadRequest(new { detail = "ไม่พบข้อมูล Revision ปัจจุบันของคำขอนี้" });
                 }
 
-                var currentRevision = await _bcg.RequestRevisions
-                    .AsNoTracking()
-                    .SingleOrDefaultAsync(rv =>
-                        rv.RequestId == id &&
-                        rv.RevisionNumber == rentalRequest.CurrentRevision.Value &&
-                        rv.Active == 1,
-                        cancellationToken);
+                var revisionQuery =
+                    from _data in _bcg.RequestRevisions.AsNoTracking()
+                    where _data.Active == 1
+                        && _data.RequestId == id
+                        && _data.RevisionNumber == rentalRequest.CurrentRevision.Value
+                    select _data;
+
+                var currentRevision = await revisionQuery.SingleOrDefaultAsync(cancellationToken);
 
                 if (currentRevision == null)
                 {
@@ -181,14 +186,15 @@ namespace BCG_RPAS_API.Controllers
                 var expectedStepNumber = rentalRequest.StatusId == DataFactory.StatusPendingManager ? 1 : 2;
                 var expectedRoleId = expectedStepNumber == 1 ? DataFactory.RoleManager : DataFactory.RoleExecutive;
 
-                var activeStep = await _bcg.ApprovalSteps
-                    .AsNoTracking()
-                    .SingleOrDefaultAsync(s =>
-                        s.RequestId == id &&
-                        s.RequestRevisionId == currentRevision.Id &&
-                        s.StepNumber == expectedStepNumber &&
-                        s.Active == 1,
-                        cancellationToken);
+                var stepQuery =
+                    from _data in _bcg.ApprovalSteps.AsNoTracking()
+                    where _data.Active == 1
+                        && _data.RequestId == id
+                        && _data.RequestRevisionId == currentRevision.Id
+                        && _data.StepNumber == expectedStepNumber
+                    select _data;
+
+                var activeStep = await stepQuery.SingleOrDefaultAsync(cancellationToken);
 
                 if (activeStep == null || activeStep.Status != DataFactory.StepStatus.StepStatusPending)
                 {
@@ -213,11 +219,15 @@ namespace BCG_RPAS_API.Controllers
                 await using var transaction = await _bcg.Database.BeginTransactionAsync(cancellationToken);
 
                 // อัปเดต ApprovalStep ปัจจุบันให้เป็น Approved
-                var stepAffected = await _bcg.ApprovalSteps
-                    .Where(s =>
-                        s.Id == activeStep.Id &&
-                        s.Status == DataFactory.StepStatus.StepStatusPending &&
-                        s.ConcurrencyVersion == activeStep.ConcurrencyVersion)
+                var updateStepQuery =
+                    from _data in _bcg.ApprovalSteps
+                    where _data.Active == 1
+                        && _data.Id == activeStep.Id
+                        && _data.Status == DataFactory.StepStatus.StepStatusPending
+                        && _data.ConcurrencyVersion == activeStep.ConcurrencyVersion
+                    select _data;
+
+                var stepAffected = await updateStepQuery
                     .ExecuteUpdateAsync(setters => setters
                         .SetProperty(s => s.Status, DataFactory.StepStatus.StepStatusApproved)
                         .SetProperty(s => s.ActionDate, (DateTime?)now)
@@ -236,13 +246,16 @@ namespace BCG_RPAS_API.Controllers
                 if (!isFinalApproval)
                 {
                     // กรณี Manager อนุมัติ และยอดก่อน VAT > 50,000 บาท -> ส่งต่อให้ Executive (Step 2)
-                    var nextStepAffected = await _bcg.ApprovalSteps
-                        .Where(s =>
-                            s.RequestId == id &&
-                            s.RequestRevisionId == currentRevision.Id &&
-                            s.StepNumber == 2 &&
-                            s.Status == DataFactory.StepStatus.StepStatusWaiting &&
-                            s.Active == 1)
+                    var nextStepQuery =
+                        from _data in _bcg.ApprovalSteps
+                        where _data.Active == 1
+                            && _data.RequestId == id
+                            && _data.RequestRevisionId == currentRevision.Id
+                            && _data.StepNumber == 2
+                            && _data.Status == DataFactory.StepStatus.StepStatusWaiting
+                        select _data;
+
+                    var nextStepAffected = await nextStepQuery
                         .ExecuteUpdateAsync(setters => setters
                             .SetProperty(s => s.Status, DataFactory.StepStatus.StepStatusPending)
                             .SetProperty(s => s.ActionDate, (DateTime?)null)
@@ -257,12 +270,15 @@ namespace BCG_RPAS_API.Controllers
                         return Conflict(new { detail = "ไม่พบขั้นตอนการอนุมัติของผู้บริหาร (Executive) ในรอบนี้" });
                     }
 
-                    var reqAffected = await _bcg.RentalRequests
-                        .Where(r =>
-                            r.Id == id &&
-                            r.StatusId == DataFactory.StatusPendingManager &&
-                            r.ConcurrencyVersion == expectedVersion &&
-                            r.Active == 1)
+                    var updateReqQuery =
+                        from _data in _bcg.RentalRequests
+                        where _data.Active == 1
+                            && _data.Id == id
+                            && _data.StatusId == DataFactory.StatusPendingManager
+                            && _data.ConcurrencyVersion == expectedVersion
+                        select _data;
+
+                    var reqAffected = await updateReqQuery
                         .ExecuteUpdateAsync(setters => setters
                             .SetProperty(r => r.StatusId, DataFactory.StatusPendingExecutive)
                             .SetProperty(r => r.ModifyBy, (int?)approverId.Value)
@@ -307,12 +323,15 @@ namespace BCG_RPAS_API.Controllers
                 else
                 {
                     // กรณีอนุมัติขั้นสุดท้าย -> เปลี่ยนเป็น APPROVED + สร้าง ErpJob ในธุรกรรมเดียวกันแบบ Atomic
-                    var reqAffected = await _bcg.RentalRequests
-                        .Where(r =>
-                            r.Id == id &&
-                            r.StatusId == rentalRequest.StatusId &&
-                            r.ConcurrencyVersion == expectedVersion &&
-                            r.Active == 1)
+                    var finalReqQuery =
+                        from _data in _bcg.RentalRequests
+                        where _data.Active == 1
+                            && _data.Id == id
+                            && _data.StatusId == rentalRequest.StatusId
+                            && _data.ConcurrencyVersion == expectedVersion
+                        select _data;
+
+                    var reqAffected = await finalReqQuery
                         .ExecuteUpdateAsync(setters => setters
                             .SetProperty(r => r.StatusId, DataFactory.StatusApproved)
                             .SetProperty(r => r.ApprovedDate, (DateTime?)now)
@@ -484,9 +503,13 @@ namespace BCG_RPAS_API.Controllers
                     return BadRequest(new { detail = "ต้องส่ง ExpectedConcurrencyVersion ที่ถูกต้อง" });
                 }
 
-                var rentalRequest = await _bcg.RentalRequests
-                    .AsNoTracking()
-                    .SingleOrDefaultAsync(r => r.Id == id && r.Active == 1, cancellationToken);
+                var requestQuery =
+                    from _data in _bcg.RentalRequests.AsNoTracking()
+                    where _data.Active == 1
+                        && _data.Id == id
+                    select _data;
+
+                var rentalRequest = await requestQuery.SingleOrDefaultAsync(cancellationToken);
 
                 if (rentalRequest == null)
                 {
@@ -517,13 +540,14 @@ namespace BCG_RPAS_API.Controllers
                     return BadRequest(new { detail = "ไม่พบข้อมูล Revision ปัจจุบัน" });
                 }
 
-                var currentRevision = await _bcg.RequestRevisions
-                    .AsNoTracking()
-                    .SingleOrDefaultAsync(rv =>
-                        rv.RequestId == id &&
-                        rv.RevisionNumber == rentalRequest.CurrentRevision.Value &&
-                        rv.Active == 1,
-                        cancellationToken);
+                var revisionQuery =
+                    from _data in _bcg.RequestRevisions.AsNoTracking()
+                    where _data.Active == 1
+                        && _data.RequestId == id
+                        && _data.RevisionNumber == rentalRequest.CurrentRevision.Value
+                    select _data;
+
+                var currentRevision = await revisionQuery.SingleOrDefaultAsync(cancellationToken);
 
                 if (currentRevision == null)
                 {
@@ -533,14 +557,15 @@ namespace BCG_RPAS_API.Controllers
                 var expectedStepNumber = rentalRequest.StatusId == DataFactory.StatusPendingManager ? 1 : 2;
                 var expectedRoleId = expectedStepNumber == 1 ? DataFactory.RoleManager : DataFactory.RoleExecutive;
 
-                var activeStep = await _bcg.ApprovalSteps
-                    .AsNoTracking()
-                    .SingleOrDefaultAsync(s =>
-                        s.RequestId == id &&
-                        s.RequestRevisionId == currentRevision.Id &&
-                        s.StepNumber == expectedStepNumber &&
-                        s.Active == 1,
-                        cancellationToken);
+                var stepQuery =
+                    from _data in _bcg.ApprovalSteps.AsNoTracking()
+                    where _data.Active == 1
+                        && _data.RequestId == id
+                        && _data.RequestRevisionId == currentRevision.Id
+                        && _data.StepNumber == expectedStepNumber
+                    select _data;
+
+                var activeStep = await stepQuery.SingleOrDefaultAsync(cancellationToken);
 
                 if (activeStep == null || activeStep.Status != DataFactory.StepStatus.StepStatusPending)
                 {
@@ -572,11 +597,15 @@ namespace BCG_RPAS_API.Controllers
                 await using var transaction = await _bcg.Database.BeginTransactionAsync(cancellationToken);
 
                 // 1. อัปเดตขั้นปัจจุบันเป็น Rejected หรือ Returned พร้อมระบุ ActionDate และ Reason
-                var stepAffected = await _bcg.ApprovalSteps
-                    .Where(s =>
-                        s.Id == activeStep.Id &&
-                        s.Status == DataFactory.StepStatus.StepStatusPending &&
-                        s.ConcurrencyVersion == activeStep.ConcurrencyVersion)
+                var updateStepQuery =
+                    from _data in _bcg.ApprovalSteps
+                    where _data.Active == 1
+                        && _data.Id == activeStep.Id
+                        && _data.Status == DataFactory.StepStatus.StepStatusPending
+                        && _data.ConcurrencyVersion == activeStep.ConcurrencyVersion
+                    select _data;
+
+                var stepAffected = await updateStepQuery
                     .ExecuteUpdateAsync(setters => setters
                         .SetProperty(s => s.Status, targetStepStatus)
                         .SetProperty(s => s.ActionDate, (DateTime?)now)
@@ -597,12 +626,15 @@ namespace BCG_RPAS_API.Controllers
                     ? DataFactory.StepStatus.StepStatusCancelled
                     : DataFactory.StepStatus.StepStatusSuperseded;
 
-                await _bcg.ApprovalSteps
-                    .Where(s =>
-                        s.RequestId == id &&
-                        s.RequestRevisionId == currentRevision.Id &&
-                        s.Status == DataFactory.StepStatus.StepStatusWaiting &&
-                        s.Active == 1)
+                var waitingStepQuery =
+                    from _data in _bcg.ApprovalSteps
+                    where _data.Active == 1
+                        && _data.RequestId == id
+                        && _data.RequestRevisionId == currentRevision.Id
+                        && _data.Status == DataFactory.StepStatus.StepStatusWaiting
+                    select _data;
+
+                await waitingStepQuery
                     .ExecuteUpdateAsync(setters => setters
                         .SetProperty(s => s.Status, remainingWaitingStatus)
                         .SetProperty(s => s.ActionDate, (DateTime?)now)
@@ -613,12 +645,15 @@ namespace BCG_RPAS_API.Controllers
                         cancellationToken);
 
                 // 3. อัปเดตสถานะของ RentalRequest
-                var reqAffected = await _bcg.RentalRequests
-                    .Where(r =>
-                        r.Id == id &&
-                        r.StatusId == rentalRequest.StatusId &&
-                        r.ConcurrencyVersion == expectedVersion &&
-                        r.Active == 1)
+                var updateReqQuery =
+                    from _data in _bcg.RentalRequests
+                    where _data.Active == 1
+                        && _data.Id == id
+                        && _data.StatusId == rentalRequest.StatusId
+                        && _data.ConcurrencyVersion == expectedVersion
+                    select _data;
+
+                var reqAffected = await updateReqQuery
                     .ExecuteUpdateAsync(setters => setters
                         .SetProperty(r => r.StatusId, targetRequestStatusId)
                         .SetProperty(r => r.ModifyBy, (int?)approverId.Value)

@@ -13,38 +13,16 @@ namespace BCG_RPAS_API.Controllers
     {
         private readonly BCG_RPASContext _bcg;
         private readonly IConfiguration _configuration;
+
         public AuthController(BCG_RPASContext bcg, IConfiguration configuration)
         {
             _bcg = bcg;
             _configuration = configuration;
         }
+
         [HttpGet("health")]
         public IActionResult Health()
         {
-            // Datatest create user
-            //var user = new User
-            //{
-            //    UserName = "gun01",
-            //    DisplayName = "Guntapong",
-            //    RoleId = 1,
-            //    Active = 1,
-            //    CanLogin = 1,
-
-            //    // กำหนดตามกติกาเริ่มต้นของระบบ
-            //    ConcurrencyVersion = 1,
-            //    CreateBy = 1,
-            //    CreateDate = DateTime.Now
-            //};
-
-            //var passwordHasher = new PasswordHasher<User>();
-
-            //user.PasswordHash = passwordHasher.HashPassword(
-            //    user,
-            //    "1234"
-            //);
-
-            //_bcg.Users.Add(user);
-            //_bcg.SaveChanges();
             return Ok(new
             {
                 message = "Auth API พร้อมรับคำขอ"
@@ -57,29 +35,21 @@ namespace BCG_RPAS_API.Controllers
         {
             try
             {
-                // work space
                 string userName = request.UserName;
                 string password = request.Password;
 
-                //var user = (from _data in _bcg.Users
-                //            where _data.Active == 1 &&
-                //            _data.CanLogin == 1 &&
-                //            _data.UserName == userName
-                //            select _data).FirstOrDefault();
+                var query =
+                    from _data in _bcg.Users.Include(x => x.Role).AsNoTracking()
+                    where _data.Active == 1
+                        && _data.CanLogin == 1
+                        && _data.UserName == userName
+                    select _data;
 
-                // รูปแบบใหม่ dotnet 
-                var user = _bcg.Users
-                    .AsNoTracking()
-                    .Include(u => u.Role)
-                    .FirstOrDefault(u =>
-                        u.Active == 1 &&
-                        u.CanLogin == 1 &&
-                        u.UserName == request.UserName);
+                var user = query.FirstOrDefault();
 
                 if (user == null || string.IsNullOrWhiteSpace(user.PasswordHash))
                 {
-                    return Unauthorized(
-                    new
+                    return Unauthorized(new
                     {
                         title = "เข้าสู่ระบบไม่สำเร็จ",
                         status = StatusCodes.Status401Unauthorized,
@@ -97,8 +67,7 @@ namespace BCG_RPAS_API.Controllers
 
                 if (verificationResult == PasswordVerificationResult.Failed)
                 {
-                    return Unauthorized(
-                    new 
+                    return Unauthorized(new
                     {
                         title = "เข้าสู่ระบบไม่สำเร็จ",
                         status = StatusCodes.Status401Unauthorized,
@@ -159,9 +128,9 @@ namespace BCG_RPAS_API.Controllers
             catch (Exception)
             {
                 return Problem(
-                     statusCode: StatusCodes.Status500InternalServerError,
-                     title: "ระบบขัดข้อง",
-                     detail: "ไม่สามารถเข้าสู่ระบบได้ในขณะนี้ กรุณาลองใหม่ภายหลัง"
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    title: "ระบบขัดข้อง",
+                    detail: "ไม่สามารถเข้าสู่ระบบได้ในขณะนี้ กรุณาลองใหม่ภายหลัง"
                 );
             }
         }

@@ -1,19 +1,20 @@
 ﻿namespace BCG_RPAS_API.Services
 {
-    public class GetCurrentUser 
+    public class GetCurrentUser
     {
         private readonly BCG_RPASContext _bcg;
         private readonly IHttpContextAccessor _httpContextAccessor;
+
         public GetCurrentUser(
-                BCG_RPASContext bcg,
-                IHttpContextAccessor httpContextAccessor)
+            BCG_RPASContext bcg,
+            IHttpContextAccessor httpContextAccessor)
         {
             _bcg = bcg;
             _httpContextAccessor = httpContextAccessor;
         }
 
         public async Task<int?> GetCurrentUserId(
-              CancellationToken cancellationToken)
+            CancellationToken cancellationToken)
         {
             var currentUser = _httpContextAccessor.HttpContext?.User;
 
@@ -30,16 +31,15 @@
             }
 
             var query =
-                from u in _bcg.Users.AsNoTracking()
-                where u.Id == userId
-                    && u.Active == 1
-                    && u.CanLogin == 1
-                    && u.Role.Active == 1
-                    && u.Role.RoleCode != "SYSTEM"
-                select (int?)u.Id;
+                from _data in _bcg.Users.AsNoTracking()
+                where _data.Active == 1
+                    && _data.Id == userId
+                    && _data.CanLogin == 1
+                    && _data.Role.Active == 1
+                    && _data.Role.RoleCode != "SYSTEM"
+                select (int?)_data.Id;
 
-            var result = await query.SingleOrDefaultAsync(
-                cancellationToken);
+            var result = await query.SingleOrDefaultAsync(cancellationToken);
 
             return result;
         }

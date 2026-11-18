@@ -21,19 +21,20 @@ namespace BCG_RPAS_API.Controllers.Master
         public async Task<IActionResult> Get(
             CancellationToken cancellationToken = default)
         {
-            var query = from _data in _bcg.MasterRentalTypes.AsNoTracking()
-                        where _data.Active == 1
-                        orderby _data.Id
-                        select new
-                        {
-                            _data.Id,
-                            _data.RentalTypeCode,
-                            _data.Name,
-                            _data.Active,
-                            _data.ConcurrencyVersion,
-                            _data.ModifyDate,
-                            _data.CreateDate
-                        };
+            var query =
+                from _data in _bcg.MasterRentalTypes.AsNoTracking()
+                where _data.Active == 1
+                orderby _data.Id
+                select new
+                {
+                    _data.Id,
+                    _data.RentalTypeCode,
+                    _data.Name,
+                    _data.Active,
+                    _data.ConcurrencyVersion,
+                    _data.ModifyDate,
+                    _data.CreateDate
+                };
 
             var result = await query.ToListAsync(cancellationToken);
             return Ok(result);
@@ -53,8 +54,13 @@ namespace BCG_RPAS_API.Controllers.Master
             // Soft Delete (Active = 0)
             if (request.Id > 0 && request.Active == 0)
             {
-                var toDelete = await _bcg.MasterRentalTypes
-                    .SingleOrDefaultAsync(rt => rt.Id == request.Id && rt.Active == 1, cancellationToken);
+                var deleteQuery =
+                    from _data in _bcg.MasterRentalTypes
+                    where _data.Active == 1
+                        && _data.Id == request.Id
+                    select _data;
+
+                var toDelete = await deleteQuery.SingleOrDefaultAsync(cancellationToken);
 
                 if (toDelete == null)
                 {
@@ -104,8 +110,13 @@ namespace BCG_RPAS_API.Controllers.Master
                 return BadRequest(new { detail = "ชื่อประเภทการเช่าต้องไม่เกิน 200 ตัวอักษร" });
             }
 
-            var duplicateEntity = await _bcg.MasterRentalTypes
-                .SingleOrDefaultAsync(rt => rt.Id != request.Id && rt.RentalTypeCode == code, cancellationToken);
+            var duplicateQuery =
+                from _data in _bcg.MasterRentalTypes
+                where _data.Id != request.Id
+                    && _data.RentalTypeCode == code
+                select _data;
+
+            var duplicateEntity = await duplicateQuery.SingleOrDefaultAsync(cancellationToken);
 
             if (duplicateEntity != null)
             {
@@ -136,10 +147,11 @@ namespace BCG_RPAS_API.Controllers.Master
 
             if (request.Id == 0)
             {
-                var maxId = await _bcg.MasterRentalTypes
-                    .AsNoTracking()
-                    .Select(rt => (int?)rt.Id)
-                    .MaxAsync(cancellationToken) ?? 0;
+                var maxIdQuery =
+                    from _data in _bcg.MasterRentalTypes.AsNoTracking()
+                    select (int?)_data.Id;
+
+                var maxId = await maxIdQuery.MaxAsync(cancellationToken) ?? 0;
 
                 var entity = new MasterRentalType
                 {
@@ -163,8 +175,13 @@ namespace BCG_RPAS_API.Controllers.Master
             }
             else
             {
-                var existing = await _bcg.MasterRentalTypes
-                    .SingleOrDefaultAsync(rt => rt.Id == request.Id && rt.Active == 1, cancellationToken);
+                var existingQuery =
+                    from _data in _bcg.MasterRentalTypes
+                    where _data.Active == 1
+                        && _data.Id == request.Id
+                    select _data;
+
+                var existing = await existingQuery.SingleOrDefaultAsync(cancellationToken);
 
                 if (existing == null)
                 {
