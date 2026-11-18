@@ -12,6 +12,8 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<GetCurrentUser>();
+builder.Services.AddSingleton<ErpSyncService>();
+builder.Services.AddHostedService<ErpBackgroundWorker>();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
